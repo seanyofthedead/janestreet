@@ -1,0 +1,239 @@
+#!/bin/bash
+# Setup script for OCaml/Melange trading core
+# Run inside WSL2: bash ~/janestreet-setup/setup-ocaml.sh
+
+set -euo pipefail
+
+PROJECT_DIR="$HOME/janestreet"
+WINDOWS_OUT="/mnt/c/Users/peder/Documents/janestreet/trading-core-js"
+
+echo "=== Setting up OCaml/Melange trading core ==="
+
+# Ensure opam env is loaded
+export PATH="$HOME/bin:$PATH"
+eval $(opam env)
+
+# Create project structure
+mkdir -p "$PROJECT_DIR/trading-core/lib/signals"
+mkdir -p "$PROJECT_DIR/trading-core/test"
+
+# --- dune-project ---
+cat > "$PROJECT_DIR/dune-project" << 'DUNE_PROJECT'
+(lang dune 3.20)
+(using melange 1.0)
+
+(name trading_core)
+
+(generate_opam_files true)
+
+(source (github user/janestreet-trading))
+(license MIT)
+
+(package
+ (name trading_core)
+ (synopsis "Autonomous multi-strategy trading agent - OCaml core")
+ (depends
+  (ocaml (>= 5.4))
+  (melange (>= 6.0))
+  (dune (>= 3.20))))
+DUNE_PROJECT
+
+# --- trading-core/lib/dune ---
+cat > "$PROJECT_DIR/trading-core/lib/dune" << 'DUNE_LIB'
+(library
+ (name trading_core)
+ (modes melange)
+ (libraries melange)
+ (preprocess (pps melange.ppx)))
+DUNE_LIB
+
+# --- trading-core/dune (melange.emit) ---
+cat > "$PROJECT_DIR/trading-core/dune" << 'DUNE_EMIT'
+(melange.emit
+ (target trading-core-js)
+ (libraries trading_core)
+ (module_systems es6)
+ (alias melange))
+DUNE_EMIT
+
+# --- trading-core/lib/types.ml (starter types) ---
+cat > "$PROJECT_DIR/trading-core/lib/types.ml" << 'OCAML_TYPES'
+(** Core trading types - make illegal states unrepresentable.
+    Jane Street style: sum types for state machines, Result for errors. *)
+
+type side = Buy | Sell
+
+type strategy_id =
+  | Mean_reversion
+  | Sector_rotation
+  | Calendar_seasonal
+  | Momentum
+  | Market_making
+
+type signal_strength =
+  | Strong of float    (** confidence > 0.8 *)
+  | Moderate of float  (** 0.5 < confidence <= 0.8 *)
+  | Weak of float      (** confidence <= 0.5 *)
+
+type risk_action =
+  | Allow
+  | Reduce_size of float
+  | Reject of string
+  | Flatten_all of string
+  | Kill_switch of string
+
+type engine_state =
+  | Starting
+  | Warming_up
+  | Trading
+  | Off_hours
+  | Read_only
+  | Cooldown of { until: float; reason: string }
+  | Halted of { reason: string }
+
+type account_phase =
+  | Micro      (** < $2,500 *)
+  | Small      (** $2,500 - $10,000 *)
+  | Medium     (** $10,000 - $25,000 *)
+  | Standard   (** $25,000+ *)
+
+type pdt_status =
+  | Unrestricted
+  | Restricted of { trades_used: int }
+  | Blocked
+
+type market_regime =
+  | Low_vol_trending
+  | Normal
+  | High_vol_ranging
+  | Crisis
+
+type strategy_maturity =
+  | Pilot of { days_active: int }
+  | Evaluated of { sharpe: float }
+  | Mature of { sharpe: float; correlation: float array }
+
+(** Determine account phase from equity *)
+let phase_of_equity equity =
+  if equity < 2500.0 then Micro
+  else if equity < 10000.0 then Small
+  else if equity < 25000.0 then Medium
+  else Standard
+
+(** Check if a strategy is enabled for a given phase *)
+let strategy_enabled_for_phase phase strategy =
+  match phase, strategy with
+  | Micro, Mean_reversion -> true
+  | Micro, Sector_rotation -> true
+  | Micro, Calendar_seasonal -> true
+  | Micro, Momentum -> false
+  | Micro, Market_making -> false
+  | Small, Market_making -> false
+  | Small, _ -> true
+  | Medium, _ -> true
+  | Standard, _ -> true
+
+(** Trivial test function for integration verification *)
+let hello () = "Trading Core v0.1.0 - OCaml/Melange"
+
+(** Version info for JS interop verification *)
+let version = "0.1.0"
+OCAML_TYPES
+
+# --- trading-core/lib/types.mli (interface) ---
+cat > "$PROJECT_DIR/trading-core/lib/types.mli" << 'OCAML_MLI'
+type side = Buy | Sell
+
+type strategy_id =
+  | Mean_reversion
+  | Sector_rotation
+  | Calendar_seasonal
+  | Momentum
+  | Market_making
+
+type signal_strength =
+  | Strong of float
+  | Moderate of float
+  | Weak of float
+
+type risk_action =
+  | Allow
+  | Reduce_size of float
+  | Reject of string
+  | Flatten_all of string
+  | Kill_switch of string
+
+type engine_state =
+  | Starting
+  | Warming_up
+  | Trading
+  | Off_hours
+  | Read_only
+  | Cooldown of { until: float; reason: string }
+  | Halted of { reason: string }
+
+type account_phase =
+  | Micro
+  | Small
+  | Medium
+  | Standard
+
+type pdt_status =
+  | Unrestricted
+  | Restricted of { trades_used: int }
+  | Blocked
+
+type market_regime =
+  | Low_vol_trending
+  | Normal
+  | High_vol_ranging
+  | Crisis
+
+type strategy_maturity =
+  | Pilot of { days_active: int }
+  | Evaluated of { sharpe: float }
+  | Mature of { sharpe: float; correlation: float array }
+
+val phase_of_equity : float -> account_phase
+val strategy_enabled_for_phase : account_phase -> strategy_id -> bool
+val hello : unit -> string
+val version : string
+OCAML_MLI
+
+# --- trading-core/trading_core.opam (generated placeholder) ---
+cat > "$PROJECT_DIR/trading-core/trading_core.opam" << 'OPAM'
+# This file is generated by dune
+opam-version: "2.0"
+synopsis: "Autonomous multi-strategy trading agent - OCaml core"
+depends: [
+  "ocaml" {>= "5.4"}
+  "melange" {>= "6.0"}
+  "dune" {>= "3.20"}
+]
+build: [
+  ["dune" "build" "-p" name "-j" jobs "@melange"]
+]
+OPAM
+
+# --- Build the Melange output ---
+echo "=== Building Melange output ==="
+cd "$PROJECT_DIR"
+eval $(opam env)
+dune build @melange 2>&1
+
+# --- Copy JS output to Windows filesystem ---
+echo "=== Copying JS output to Windows filesystem ==="
+mkdir -p "$WINDOWS_OUT"
+
+# Find and copy the Melange output
+if [ -d "$PROJECT_DIR/_build/default/trading-core/trading-core-js" ]; then
+  cp -r "$PROJECT_DIR/_build/default/trading-core/trading-core-js/"* "$WINDOWS_OUT/"
+  echo "=== JS output copied to $WINDOWS_OUT ==="
+  echo "=== Files: ==="
+  find "$WINDOWS_OUT" -name "*.js" -type f
+else
+  echo "=== Looking for build output ==="
+  find "$PROJECT_DIR/_build" -name "*.js" -type f 2>/dev/null | head -20
+fi
+
+echo "=== Setup complete ==="

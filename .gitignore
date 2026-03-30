@@ -1,0 +1,45 @@
+# Environment
+.env
+.env.local
+.env.production
+
+# Dependencies
+node_modules/
+
+# OCaml/Dune build
+_build/
+_opam/
+*.install
+
+# Melange output (regenerated from source)
+_mel/
+
+# Next.js
+.next/
+out/
+
+# TypeScript
+dist/
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Docker
+dynamodb-data/
+
+# Historical data cache
+data/
+
+# PM2
+.pm2/

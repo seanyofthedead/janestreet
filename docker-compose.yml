@@ -1,0 +1,70 @@
+version: "3.8"
+
+services:
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: janestreet-dynamodb
+    ports:
+      - "8000:8000"
+    volumes:
+      - dynamodb-data:/home/dynamodblocal/data
+    command: "-jar DynamoDBLocal.jar -sharedDb -dbPath /home/dynamodblocal/data"
+    networks:
+      - trading-net
+
+  engine:
+    build:
+      context: .
+      dockerfile: engine/Dockerfile
+    container_name: janestreet-engine
+    depends_on:
+      - dynamodb-local
+    env_file:
+      - .env
+    environment:
+      - DYNAMODB_ENDPOINT=http://dynamodb-local:8000
+    ports:
+      - "3001:3001"
+    networks:
+      - trading-net
+    restart: unless-stopped
+
+  watchdog:
+    build:
+      context: .
+      dockerfile: watchdog/Dockerfile
+    container_name: janestreet-watchdog
+    depends_on:
+      - dynamodb-local
+    env_file:
+      - .env
+    environment:
+      - DYNAMODB_ENDPOINT=http://dynamodb-local:8000
+    ports:
+      - "3002:3002"
+    networks:
+      - trading-net
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    container_name: janestreet-dashboard
+    depends_on:
+      - engine
+    ports:
+      - "3000:3000"
+    environment:
+      - ENGINE_URL=http://engine:3001
+      - WATCHDOG_URL=http://watchdog:3002
+    networks:
+      - trading-net
+    restart: unless-stopped
+
+volumes:
+  dynamodb-data:
+
+networks:
+  trading-net:
+    driver: bridge
