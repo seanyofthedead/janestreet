@@ -226,7 +226,7 @@ export class AlpacaClient {
 
     // getBarsV2 returns an async iterator
     const bars: Bar[] = [];
-    for await (const bar of raw) {
+    for await (const bar of raw as AsyncIterable<unknown>) {
       bars.push(BarSchema.parse(bar));
     }
     return bars;

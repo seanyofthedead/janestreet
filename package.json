@@ -9,6 +9,9 @@
     "watchdog",
     "backtest"
   ],
+  "overrides": {
+    "dotenv": "^16.4.0"
+  },
   "scripts": {
     "build:ocaml": "bash scripts/build-ocaml.sh",
     "dev:engine": "npm run dev --workspace=engine",

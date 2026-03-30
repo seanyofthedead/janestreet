@@ -76,7 +76,42 @@ export type AlpacaPosition = z.infer<typeof AlpacaPositionSchema>;
 // Order
 // ---------------------------------------------------------------------------
 
-export const AlpacaOrderSchema = z.object({
+export type AlpacaOrder = {
+  id: string;
+  client_order_id: string;
+  created_at: string;
+  updated_at?: string | null;
+  submitted_at?: string | null;
+  filled_at?: string | null;
+  expired_at?: string | null;
+  canceled_at?: string | null;
+  failed_at?: string | null;
+  replaced_at?: string | null;
+  replaced_by?: string | null;
+  replaces?: string | null;
+  asset_id: string;
+  symbol: string;
+  asset_class?: string;
+  notional?: number;
+  qty?: number;
+  filled_qty: number;
+  filled_avg_price?: number;
+  order_class: string;
+  order_type: 'market' | 'limit' | 'stop' | 'stop_limit' | 'trailing_stop';
+  type: 'market' | 'limit' | 'stop' | 'stop_limit' | 'trailing_stop';
+  side: 'buy' | 'sell';
+  time_in_force: 'day' | 'gtc' | 'opg' | 'cls' | 'ioc' | 'fok';
+  limit_price?: number;
+  stop_price?: number;
+  status: string;
+  extended_hours: boolean;
+  legs?: AlpacaOrder[] | null;
+  trail_percent?: number;
+  trail_price?: number;
+  hwm?: number;
+};
+
+export const AlpacaOrderSchema: z.ZodType<AlpacaOrder, z.ZodTypeDef, unknown> = z.object({
   id: z.string(),
   client_order_id: z.string(),
   created_at: z.string(),
@@ -128,8 +163,6 @@ export const AlpacaOrderSchema = z.object({
   trail_price: optionalNumeric,
   hwm: optionalNumeric,
 });
-
-export type AlpacaOrder = z.infer<typeof AlpacaOrderSchema>;
 
 // ---------------------------------------------------------------------------
 // Trade Update (streaming)
