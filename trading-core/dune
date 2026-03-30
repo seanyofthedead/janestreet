@@ -1,0 +1,5 @@
+(melange.emit
+ (target trading-core-js)
+ (libraries trading_core trading_signals)
+ (module_systems esm)
+ (alias melange))

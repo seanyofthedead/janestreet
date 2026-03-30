@@ -1,0 +1,4 @@
+(melange.emit
+ (target trading-test-js)
+ (libraries trading_core)
+ (preprocess (pps melange.ppx)))

@@ -1,0 +1,5 @@
+(library
+ (name trading_signals)
+ (modes melange)
+ (libraries trading_core melange)
+ (preprocess (pps melange.ppx)))
