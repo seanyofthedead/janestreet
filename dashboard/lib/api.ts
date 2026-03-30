@@ -46,15 +46,21 @@ export interface Order {
 }
 
 export interface StrategyMetrics {
-  id: string;
+  id: number;
   name: string;
-  sharpe: number;
-  win_rate: number;
-  signal_count: number;
-  pnl: number;
-  allocation_pct: number;
-  maturity: string;
-  healthy: boolean;
+  sharpe?: number;
+  win_rate?: number;
+  signal_count?: number;
+  totalSignals?: number;
+  totalTicks?: number;
+  pnl?: number;
+  allocation_pct?: number;
+  maturity?: string;
+  healthy?: boolean;
+  isHealthy?: boolean;
+  isPrimed?: boolean;
+  consecutiveMisses?: number;
+  lastSignalAt?: string | null;
 }
 
 export interface WatchdogStatus {
