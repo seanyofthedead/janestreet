@@ -20,6 +20,7 @@ import { State } from './state.js';
 import { StrategyRunner, STRATEGY_NAMES, type SymbolMarketData, type Phase, type Regime as RegimeType, type StrategySignal } from './strategy-runner.js';
 import { ConflictResolver } from './conflict-resolver.js';
 import { ConfigPoller } from './config-poller.js';
+import { PerformanceTracker } from './performance-tracker.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -33,6 +34,39 @@ const CANCEL_ALL_MINUTE = 55;
 
 const WARMUP_BAR_COUNT = 100;
 const COOLDOWN_DURATION_MS = 30 * 60 * 1000; // 30 minutes
+
+/** Market open/close times (Eastern Time) */
+const MARKET_OPEN_HOUR = 9;
+const MARKET_OPEN_MINUTE = 30;
+const MARKET_CLOSE_HOUR = 16;
+const MARKET_CLOSE_MINUTE = 0;
+
+/**
+ * Get current Eastern Time (handles EST/EDT automatically).
+ */
+function getEasternTime(): { hour: number; minute: number } {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  });
+  const parts = formatter.formatToParts(new Date());
+  return {
+    hour: parseInt(parts.find((p) => p.type === 'hour')?.value ?? '0', 10),
+    minute: parseInt(parts.find((p) => p.type === 'minute')?.value ?? '0', 10),
+  };
+}
+
+/**
+ * Check if the given Eastern Time is during market hours (9:30 AM - 4:00 PM ET).
+ */
+function isMarketOpen(hour: number, minute: number): boolean {
+  const timeMinutes = hour * 60 + minute;
+  const openMinutes = MARKET_OPEN_HOUR * 60 + MARKET_OPEN_MINUTE;
+  const closeMinutes = MARKET_CLOSE_HOUR * 60 + MARKET_CLOSE_MINUTE;
+  return timeMinutes >= openMinutes && timeMinutes < closeMinutes;
+}
 
 // ---------------------------------------------------------------------------
 // Orchestrator
@@ -49,6 +83,7 @@ export class Orchestrator {
   readonly strategyRunner: StrategyRunner;
   readonly conflictResolver: ConflictResolver;
   readonly configPoller: ConfigPoller;
+  private readonly performanceTracker: PerformanceTracker;
 
   /** Market data buffer: latest bars per symbol */
   private barBuffer: Map<string, Array<{ o: number; h: number; l: number; c: number; v: number }>> = new Map();
@@ -82,6 +117,7 @@ export class Orchestrator {
     strategyRunner: StrategyRunner,
     conflictResolver: ConflictResolver,
     configPoller: ConfigPoller,
+    performanceTracker: PerformanceTracker,
     logger?: pino.Logger,
   ) {
     this.config = config;
@@ -93,6 +129,7 @@ export class Orchestrator {
     this.strategyRunner = strategyRunner;
     this.conflictResolver = conflictResolver;
     this.configPoller = configPoller;
+    this.performanceTracker = performanceTracker;
     this.logger = (logger ?? pino({ name: 'orchestrator' })).child({ component: 'orchestrator' });
   }
 
@@ -300,6 +337,9 @@ export class Orchestrator {
 
     // Check for human acknowledgment in Halted state
     this.checkHaltedRecovery();
+
+    // Check market hours transitions (Trading <-> Off_hours)
+    this.checkMarketHoursTransitions();
 
     // Build market data snapshots
     const marketData = this.buildMarketDataSnapshots();
@@ -537,16 +577,12 @@ export class Orchestrator {
   // -----------------------------------------------------------------------
 
   private checkMarketCloseProcedures(): void {
-    const now = new Date();
-    const hour = now.getUTCHours() - 4; // Approximate ET (not DST-aware)
-    const minute = now.getUTCMinutes();
+    const { hour, minute } = getEasternTime();
 
     // 3:50 PM ET — unwind market making
     if (hour === UNWIND_MM_HOUR && minute >= UNWIND_MM_MINUTE && !this.mmUnwound) {
       this.mmUnwound = true;
       this.logger.info('Market close: unwinding market making positions');
-      // Cancel MM orders
-      // In production, we would selectively cancel only MM strategy orders
     }
 
     // 3:55 PM ET — cancel all orders
@@ -559,9 +595,50 @@ export class Orchestrator {
     }
 
     // Reset flags at start of day
-    if (hour < 9 || (hour === 9 && minute < 30)) {
+    if (hour < MARKET_OPEN_HOUR || (hour === MARKET_OPEN_HOUR && minute < MARKET_OPEN_MINUTE)) {
       this.mmUnwound = false;
       this.ordersCanceled = false;
+    }
+  }
+
+  private checkMarketHoursTransitions(): void {
+    const { hour, minute } = getEasternTime();
+    const marketOpen = isMarketOpen(hour, minute);
+
+    // Trading -> Off_hours at market close
+    if (!marketOpen && this.state.engineState === 2 /* Trading */) {
+      this.logger.info('Market closed, transitioning to Off_hours');
+      const result = EngineState.apply_transition(this.state.engineState, 3); // Market_close
+      if (result.TAG === 0) {
+        this.transitionTo(result._0, EngineState.to_string(result._0));
+
+        // Stop trading loop during off hours
+        if (this.tickTimer) {
+          clearInterval(this.tickTimer);
+          this.tickTimer = null;
+        }
+
+        // Persist daily performance metrics
+        this.performanceTracker.persistDaily().catch((err) => {
+          this.logger.error({ err: (err as Error).message }, 'Failed to persist daily metrics');
+        });
+
+        // Reset daily flags for next session
+        this.mmUnwound = false;
+        this.ordersCanceled = false;
+      }
+    }
+
+    // Off_hours -> Warming_up at market open
+    if (marketOpen && this.state.engineState === 3 /* Off_hours */) {
+      this.logger.info('Market open, transitioning to Warming_up');
+      const result = EngineState.apply_transition(this.state.engineState, 2); // Market_open
+      if (result.TAG === 0) {
+        this.transitionTo(result._0, EngineState.to_string(result._0));
+        this.enterWarmingUp().catch((err) => {
+          this.logger.error({ err: (err as Error).message }, 'Post-open warmup failed');
+        });
+      }
     }
   }
 

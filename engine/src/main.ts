@@ -15,6 +15,7 @@ import { StrategyRunner } from './strategy-runner.js';
 import { ConflictResolver } from './conflict-resolver.js';
 import { ConfigPoller } from './config-poller.js';
 import { Orchestrator } from './orchestrator.js';
+import { PerformanceTracker } from './performance-tracker.js';
 
 // ---------------------------------------------------------------------------
 // Logger
@@ -197,6 +198,7 @@ async function main(): Promise<void> {
   const strategyRunner = new StrategyRunner(logger);
   const conflictResolver = new ConflictResolver(logger);
   const configPoller = new ConfigPoller(config, bus, logger);
+  const performanceTracker = new PerformanceTracker();
 
   // Create orchestrator
   const orchestrator = new Orchestrator(
@@ -209,6 +211,7 @@ async function main(): Promise<void> {
     strategyRunner,
     conflictResolver,
     configPoller,
+    performanceTracker,
     logger,
   );
 

@@ -5,8 +5,10 @@
  */
 
 import pino from 'pino';
+import { GetCommand } from '@aws-sdk/lib-dynamodb';
 import type { EventBus } from './event-bus.js';
 import type { EngineConfig } from './config.js';
+import { getDynamoClient, TABLE_CONFIG } from './dynamodb.js';
 
 // ---------------------------------------------------------------------------
 // Runtime config shape
@@ -176,17 +178,46 @@ export class ConfigPoller {
     }
   }
 
-  /** Stub: fetch config from DynamoDB. Returns defaults for now. */
+  /** Fetch config from DynamoDB. Falls back to current config on error or missing item. */
   private async fetchFromDynamoDB(): Promise<RuntimeConfig> {
-    // TODO: Replace with actual DynamoDB GetItem
-    // const params = {
-    //   TableName: 'engine-config',
-    //   Key: { pk: 'RUNTIME_CONFIG' },
-    // };
-    // const result = await dynamo.get(params);
-    // return parseConfig(result.Item);
+    try {
+      const client = getDynamoClient();
+      const result = await client.send(
+        new GetCommand({
+          TableName: TABLE_CONFIG,
+          Key: { key: 'RUNTIME_CONFIG' },
+        }),
+      );
 
-    return this.current;
+      if (!result.Item) {
+        return this.current; // No config stored yet — use defaults
+      }
+
+      return this.parseConfig(result.Item);
+    } catch (err) {
+      this.logger.warn({ err: (err as Error).message }, 'DynamoDB config fetch failed, using last-known-good');
+      return this.current;
+    }
+  }
+
+  /** Map DynamoDB item fields to RuntimeConfig, using current values as defaults for missing fields */
+  private parseConfig(item: Record<string, unknown>): RuntimeConfig {
+    const defaults = this.current;
+    return {
+      maxPositionPct: (item.maxPositionPct as number) ?? defaults.maxPositionPct,
+      maxSectorPct: (item.maxSectorPct as number) ?? defaults.maxSectorPct,
+      minCashReservePct: (item.minCashReservePct as number) ?? defaults.minCashReservePct,
+      maxDailyLossPct: (item.maxDailyLossPct as number) ?? defaults.maxDailyLossPct,
+      maxDrawdownReducePct: (item.maxDrawdownReducePct as number) ?? defaults.maxDrawdownReducePct,
+      maxDrawdownFlattenPct: (item.maxDrawdownFlattenPct as number) ?? defaults.maxDrawdownFlattenPct,
+      maxOrderRatePerMin: (item.maxOrderRatePerMin as number) ?? defaults.maxOrderRatePerMin,
+      heartbeatTimeoutSeconds: (item.heartbeatTimeoutSeconds as number) ?? defaults.heartbeatTimeoutSeconds,
+      maxPositionsByPhase: (item.maxPositionsByPhase as number) ?? defaults.maxPositionsByPhase,
+      symbols: (item.symbols as string[]) ?? defaults.symbols,
+      enabledStrategies: (item.enabledStrategies as Record<string, boolean>) ?? defaults.enabledStrategies,
+      humanAcknowledged: (item.humanAcknowledged as boolean) ?? defaults.humanAcknowledged,
+      lastUpdated: (item.lastUpdated as number) ?? Date.now(),
+    };
   }
 
   /** Compare two configs and return keys that differ */

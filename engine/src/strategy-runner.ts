@@ -121,6 +121,96 @@ function momentumSignal(data: SymbolMarketData, regime: Regime): StrategySignal 
   };
 }
 
+function sectorRotationSignal(data: SymbolMarketData, regime: Regime): StrategySignal | null {
+  if (data.bars.length < 50) return null;
+
+  // Relative-strength approach: compare long-term trend to short-term pullback
+  const longTermPrice = data.bars[data.bars.length - 50].c;
+  const shortTermPrice = data.bars[data.bars.length - 20].c;
+  const currentPrice = data.price;
+
+  const longReturn = (currentPrice - longTermPrice) / longTermPrice;
+  const shortReturn = (currentPrice - shortTermPrice) / shortTermPrice;
+
+  // Buy on pullback in uptrend, sell on bounce in downtrend
+  let side: number;
+  if (longReturn > 0.02 && shortReturn < -0.01) {
+    side = 0; // Buy: dip in uptrend
+  } else if (longReturn < -0.02 && shortReturn > 0.01) {
+    side = 1; // Sell: rally in downtrend
+  } else {
+    return null;
+  }
+
+  const conf = Math.min(Math.abs(longReturn) * 4, 0.8);
+  const strengthTag = conf >= 0.7 ? 0 : conf >= 0.4 ? 1 : 2;
+
+  return {
+    strategy: 1,
+    symbol: data.symbol,
+    side,
+    strength: { TAG: strengthTag, _0: conf },
+    target_price: shortTermPrice, // Mean-revert to recent level
+    max_position_pct: regime === 3 ? 0.03 : 0.06,
+    timestamp: Date.now(),
+  };
+}
+
+function calendarSeasonalSignal(data: SymbolMarketData, regime: Regime): StrategySignal | null {
+  if (data.bars.length < 30) return null;
+
+  // Seasonal anomalies break down in crises
+  if (regime === 3) return null;
+
+  const now = new Date();
+  const dayOfMonth = now.getDate();
+  const month = now.getMonth() + 1; // 1-indexed
+  const daysInMonth = new Date(now.getFullYear(), month, 0).getDate();
+
+  // Turn-of-month effect: last 3 days + first 3 days are bullish
+  const isTurnOfMonth = dayOfMonth >= daysInMonth - 2 || dayOfMonth <= 3;
+
+  // Sell-in-May: May through October tends bearish, Nov-Apr bullish
+  const isSellInMay = month >= 5 && month <= 10;
+
+  if (isTurnOfMonth) {
+    // Turn-of-month: weak Buy
+    return {
+      strategy: 2,
+      symbol: data.symbol,
+      side: 0,
+      strength: { TAG: 2, _0: 0.55 }, // Weak — low-conviction seasonal edge
+      target_price: data.price * 1.005,
+      max_position_pct: 0.04,
+      timestamp: Date.now(),
+    };
+  }
+
+  if (isSellInMay) {
+    // Summer months: weak Sell
+    return {
+      strategy: 2,
+      symbol: data.symbol,
+      side: 1,
+      strength: { TAG: 2, _0: 0.45 }, // Weak
+      target_price: data.price * 0.995,
+      max_position_pct: 0.04,
+      timestamp: Date.now(),
+    };
+  }
+
+  // Nov-Apr: weak Buy
+  return {
+    strategy: 2,
+    symbol: data.symbol,
+    side: 0,
+    strength: { TAG: 2, _0: 0.50 }, // Weak
+    target_price: data.price * 1.003,
+    max_position_pct: 0.04,
+    timestamp: Date.now(),
+  };
+}
+
 function marketMakingSignal(data: SymbolMarketData, _regime: Regime): StrategySignal | null {
   if (data.bars.length < 10) return null;
 
@@ -179,8 +269,8 @@ export class StrategyRunner {
 
     // Register built-in signal generators
     this.generators.set(0, meanReversionSignal);
-    this.generators.set(1, () => null); // sector rotation: stub
-    this.generators.set(2, () => null); // calendar seasonal: stub
+    this.generators.set(1, sectorRotationSignal);
+    this.generators.set(2, calendarSeasonalSignal);
     this.generators.set(3, momentumSignal);
     this.generators.set(4, marketMakingSignal);
 

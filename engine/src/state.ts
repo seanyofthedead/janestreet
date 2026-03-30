@@ -4,8 +4,10 @@
  */
 
 import pino from 'pino';
+import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import type { AlpacaClient } from './alpaca/client.js';
 import type { AlpacaPosition, AlpacaOrder } from './alpaca/types.js';
+import { getDynamoClient, TABLE_STATE } from './dynamodb.js';
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -284,24 +286,32 @@ export class State {
   }
 
   // -----------------------------------------------------------------------
-  // DynamoDB persistence (stubbed)
+  // DynamoDB persistence
   // -----------------------------------------------------------------------
 
   private async persistState(): Promise<void> {
-    // TODO: Persist to DynamoDB
-    // const params = {
-    //   TableName: 'engine-state',
-    //   Item: {
-    //     pk: 'ENGINE_STATE',
-    //     sk: Date.now().toString(),
-    //     equity: this.equity,
-    //     cash: this.cash,
-    //     positions: this.getAllPositions(),
-    //     activeOrders: this.getAllActiveOrders(),
-    //     engineState: this.engineStateName,
-    //   },
-    // };
-    this.logger.debug('State persistence (stubbed)');
+    try {
+      const client = getDynamoClient();
+      await client.send(
+        new PutCommand({
+          TableName: TABLE_STATE,
+          Item: {
+            pk: 'ENGINE_STATE',
+            sk: Date.now().toString(),
+            equity: this.equity,
+            cash: this.cash,
+            positions: this.getAllPositions(),
+            activeOrders: this.getAllActiveOrders(),
+            engineState: this.engineStateName,
+            timestamp: Date.now(),
+          },
+        }),
+      );
+      this.logger.debug('State persisted to DynamoDB');
+    } catch (err) {
+      // Non-fatal: Alpaca is the source of truth; reconcileWithAlpaca re-syncs on restart
+      this.logger.warn({ err: (err as Error).message }, 'State persistence failed');
+    }
   }
 
   // -----------------------------------------------------------------------

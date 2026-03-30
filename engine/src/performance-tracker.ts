@@ -4,12 +4,15 @@
  */
 
 import pino from 'pino';
+import { PutCommand } from '@aws-sdk/lib-dynamodb';
 
 // ---------------------------------------------------------------------------
 // Melange-compiled performance module
 // ---------------------------------------------------------------------------
 
 import * as Performance from '../../trading-core-js/trading-core/lib/performance.js';
+
+import { getDynamoClient, TABLE_HISTORY } from './dynamodb.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -155,16 +158,41 @@ export class PerformanceTracker {
   // Persistence (DynamoDB stub)
   // -----------------------------------------------------------------------
 
-  /**
-   * Persist daily performance snapshot to DynamoDB.
-   * Stub: logs the intent; real implementation will use AWS SDK.
-   */
+  /** Persist daily performance snapshot to DynamoDB. */
   async persistDaily(): Promise<void> {
     const allMetrics = this.getAllMetrics();
-    this.logger.info(
-      { strategyCount: allMetrics.size },
-      'persistDaily: would write to DynamoDB (stubbed)',
-    );
-    // TODO: DynamoDB putItem for each strategy's daily metrics
+    const client = getDynamoClient();
+    const date = new Date().toISOString().slice(0, 10);
+    const now = Date.now();
+
+    this.logger.info({ strategyCount: allMetrics.size }, 'Persisting daily metrics');
+
+    for (const [strategy, metrics] of allMetrics) {
+      try {
+        await client.send(
+          new PutCommand({
+            TableName: TABLE_HISTORY,
+            Item: {
+              strategy,
+              timestamp: now,
+              date,
+              sharpe: metrics.sharpe,
+              sortino: metrics.sortino,
+              maxDrawdown: metrics.maxDrawdown,
+              winRate: metrics.winRate,
+              profitFactor: metrics.profitFactor,
+              tradeCount: metrics.tradeCount,
+              avgWin: metrics.avgWin,
+              avgLoss: metrics.avgLoss,
+            },
+          }),
+        );
+      } catch (err) {
+        this.logger.warn(
+          { strategy, err: (err as Error).message },
+          'Failed to persist daily metrics for strategy',
+        );
+      }
+    }
   }
 }
