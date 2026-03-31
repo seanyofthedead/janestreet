@@ -1,7 +1,7 @@
 ---
 title: "refactor: Bundle Melange runtime into self-contained trading-core-js output"
 type: refactor
-status: active
+status: completed
 date: 2026-03-31
 deepened: 2026-03-31
 ---
@@ -129,7 +129,7 @@ esbuild's `allowOverwrite: true` safely writes output to the same paths as input
 
 ## Implementation Units
 
-- [ ] **Unit 1: Create the bundling script**
+- [x] **Unit 1: Create the bundling script**
 
   **Goal:** Add a Node.js script that runs esbuild on each trading-core-js module to resolve bare Melange imports.
 
@@ -170,7 +170,7 @@ esbuild's `allowOverwrite: true` safely writes output to the same paths as input
   - `grep -r 'from "./' trading-core-js/trading-core/lib/` returns only trading-core inter-module imports, not melange runtime internals
   - Engine starts and completes a full tick cycle without `Stdlib__*` errors
 
-- [ ] **Unit 2: Integrate bundling into the build pipeline**
+- [x] **Unit 2: Integrate bundling into the build pipeline**
 
   **Goal:** Wire the bundling script into `scripts/build-ocaml.sh` so `npm run build:ocaml` produces self-contained output end-to-end.
 
@@ -197,7 +197,7 @@ esbuild's `allowOverwrite: true` safely writes output to the same paths as input
   **Verification:**
   - Full `npm run build:ocaml` succeeds and the output passes the grep check
 
-- [ ] **Unit 3: Remove manual patches and verify end-to-end**
+- [x] **Unit 3: Remove manual patches and verify end-to-end**
 
   **Goal:** Remove the hand-written JS shims from `risk.js` and `signal.js`, and restore the conflict resolver to use the OCaml `compare_priority` function.
 
