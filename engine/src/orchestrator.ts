@@ -75,7 +75,7 @@ function isMarketOpen(hour: number, minute: number): boolean {
 export class Orchestrator {
   private readonly logger: pino.Logger;
   private readonly config: EngineConfig;
-  private readonly client: AlpacaClient;
+  readonly alpacaClient: AlpacaClient;
   private readonly marketData: MarketDataStream;
   private readonly orderManager: OrderManager;
   readonly bus: EventBus;
@@ -121,7 +121,7 @@ export class Orchestrator {
     logger?: pino.Logger,
   ) {
     this.config = config;
-    this.client = client;
+    this.alpacaClient = client;
     this.marketData = marketData;
     this.orderManager = orderManager;
     this.bus = bus;
@@ -177,7 +177,7 @@ export class Orchestrator {
     this.configPoller.stop();
     this.marketData.disconnect();
     this.orderManager.disconnectTradeUpdates();
-    this.client.dispose();
+    this.alpacaClient.dispose();
 
     this.logger.info('Orchestrator stopped');
   }
@@ -196,12 +196,21 @@ export class Orchestrator {
     this.transitionTo(0, 'Starting'); // Starting = 0
 
     try {
-      // Reconcile with Alpaca
-      await this.state.reconcileWithAlpaca(this.client);
+      if (this.config.simulationMode) {
+        // Simulation mode: set synthetic state, skip live connections
+        this.logger.info('Simulation mode: skipping Alpaca reconciliation and live connections');
+        this.state.equity = 1000;
+        this.state.cash = 1000;
+        this.state.buyingPower = 1000;
+        this.state.peakEquity = 1000;
+      } else {
+        // Reconcile with Alpaca
+        await this.state.reconcileWithAlpaca(this.alpacaClient);
 
-      // Connect market data and order streams
-      this.marketData.connect();
-      this.orderManager.connectTradeUpdates();
+        // Connect market data and order streams
+        this.marketData.connect();
+        this.orderManager.connectTradeUpdates();
+      }
 
       // In production, we would wait for watchdog. For now, auto-advance.
       // Wait up to 10 seconds for watchdog
@@ -253,7 +262,7 @@ export class Orchestrator {
     let totalBars = 0;
     for (const symbol of symbols) {
       try {
-        const bars = await this.client.getBars(
+        const bars = await this.alpacaClient.getBars(
           symbol,
           '1Min',
           start.toISOString(),
@@ -301,6 +310,17 @@ export class Orchestrator {
       }
     } else {
       this.logger.warn('Not all strategies primed, starting trading loop anyway');
+
+      this.bus.emit('warmup-complete', {
+        strategies: this.strategyRunner
+          .getMetrics()
+          .filter((m) => m.isPrimed)
+          .map((m) => m.name),
+        barsLoaded: totalBars,
+        durationMs: Date.now() - warmupStart,
+        timestamp: Date.now(),
+      });
+
       const result = EngineState.apply_transition(this.state.engineState, 1);
       if (result.TAG === 0) {
         this.transitionTo(result._0, 'Trading');
@@ -577,6 +597,7 @@ export class Orchestrator {
   // -----------------------------------------------------------------------
 
   private checkMarketCloseProcedures(): void {
+    if (this.config.simulationMode) return;
     const { hour, minute } = getEasternTime();
 
     // 3:50 PM ET — unwind market making
@@ -602,6 +623,7 @@ export class Orchestrator {
   }
 
   private checkMarketHoursTransitions(): void {
+    if (this.config.simulationMode) return;
     const { hour, minute } = getEasternTime();
     const marketOpen = isMarketOpen(hour, minute);
 

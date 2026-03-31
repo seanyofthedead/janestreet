@@ -6,9 +6,7 @@ services:
     container_name: janestreet-dynamodb
     ports:
       - "8000:8000"
-    volumes:
-      - dynamodb-data:/home/dynamodblocal/data
-    command: "-jar DynamoDBLocal.jar -sharedDb -dbPath /home/dynamodblocal/data"
+    command: "-jar DynamoDBLocal.jar -sharedDb -inMemory"
     networks:
       - trading-net
 
@@ -61,9 +59,6 @@ services:
     networks:
       - trading-net
     restart: unless-stopped
-
-volumes:
-  dynamodb-data:
 
 networks:
   trading-net:

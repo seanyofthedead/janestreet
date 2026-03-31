@@ -59,6 +59,13 @@ export interface EngineConfig {
   heartbeatIntervalMs: number;
   /** Config poll interval in milliseconds */
   configPollIntervalMs: number;
+
+  /** Simulation mode: replay historical data during off-hours */
+  simulationMode: boolean;
+  /** Date to replay in YYYY-MM-DD format (defaults to previous trading day) */
+  simulationDate: string | undefined;
+  /** Replay speed multiplier (1 = real-time, 10 = 10x faster) */
+  simulationSpeed: number;
 }
 
 export function loadConfig(): EngineConfig {
@@ -78,6 +85,10 @@ export function loadConfig(): EngineConfig {
     tickIntervalMs: intEnv('TICK_INTERVAL_MS', 1000),
     heartbeatIntervalMs: intEnv('HEARTBEAT_INTERVAL_MS', 5000),
     configPollIntervalMs: intEnv('CONFIG_POLL_INTERVAL_MS', 60000),
+
+    simulationMode: process.env.SIMULATION_MODE === 'true',
+    simulationDate: optionalEnv('SIMULATION_DATE'),
+    simulationSpeed: intEnv('SIMULATION_SPEED', 1),
   };
 }
 

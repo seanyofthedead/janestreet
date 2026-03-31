@@ -242,7 +242,7 @@ export const TradeSchema = z.object({
   p: z.number().describe('Price'),
   s: z.number().int().describe('Size'),
   x: z.string().optional().describe('Exchange'),
-  i: z.string().optional().describe('Trade ID'),
+  i: z.coerce.string().optional().describe('Trade ID'),
   c: z.array(z.string()).optional().describe('Conditions'),
   z: z.string().optional().describe('Tape'),
 });

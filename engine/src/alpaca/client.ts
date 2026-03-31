@@ -227,7 +227,19 @@ export class AlpacaClient {
     // getBarsV2 returns an async iterator
     const bars: Bar[] = [];
     for await (const bar of raw as AsyncIterable<unknown>) {
-      bars.push(BarSchema.parse(bar));
+      const b = bar as Record<string, unknown>;
+      // Alpaca SDK v3 uses full property names; normalize to short form
+      const normalized = {
+        t: b.t ?? b.Timestamp ?? b.timestamp,
+        o: b.o ?? b.OpenPrice ?? b.open,
+        h: b.h ?? b.HighPrice ?? b.high,
+        l: b.l ?? b.LowPrice ?? b.low,
+        c: b.c ?? b.ClosePrice ?? b.close,
+        v: b.v ?? b.Volume ?? b.volume,
+        n: b.n ?? b.TradeCount ?? b.tradeCount,
+        vw: b.vw ?? b.VWAP ?? b.vwap,
+      };
+      bars.push(BarSchema.parse(normalized));
     }
     return bars;
   }

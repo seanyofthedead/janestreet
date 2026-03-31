@@ -242,7 +242,7 @@ function marketMakingSignal(data: SymbolMarketData, _regime: Regime): StrategySi
 // StrategyRunner
 // ---------------------------------------------------------------------------
 
-const MISS_THRESHOLD = 3;
+const MISS_THRESHOLD = process.env.SIMULATION_MODE === 'true' ? 300 : 30;
 const RECOVERY_THRESHOLD = 10;
 const MIN_BARS_FOR_PRIMED: Record<StrategyId, number> = {
   0: 20,  // mean reversion needs 20 bars

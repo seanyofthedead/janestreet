@@ -16,6 +16,8 @@ import { ConflictResolver } from './conflict-resolver.js';
 import { ConfigPoller } from './config-poller.js';
 import { Orchestrator } from './orchestrator.js';
 import { PerformanceTracker } from './performance-tracker.js';
+import { SimulationController, getPreviousTradingDay } from './simulation/controller.js';
+import { MockOrderManager } from './simulation/mock-order-manager.js';
 
 // ---------------------------------------------------------------------------
 // Logger
@@ -72,6 +74,9 @@ function createHttpServer(
           break;
         case '/api/strategies':
           handleStrategies(res, orchestrator);
+          break;
+        case '/api/bars':
+          handleBars(req, res, url, orchestrator);
           break;
         default:
           res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -154,8 +159,17 @@ function handleSSE(
 
 function handleAccount(res: ServerResponse, orchestrator: Orchestrator): void {
   const snapshot = orchestrator.state.getPortfolioSnapshot();
+  const response = {
+    ...snapshot,
+    buying_power: snapshot.buyingPower,
+    daily_pnl: snapshot.dailyPnl,
+    total_pnl: snapshot.totalUnrealizedPl,
+    phase: orchestrator.state.engineStateName,
+    currency: 'USD',
+    status: 'active',
+  };
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(snapshot));
+  res.end(JSON.stringify(response));
 }
 
 function handlePositions(res: ServerResponse, orchestrator: Orchestrator): void {
@@ -176,6 +190,39 @@ function handleStrategies(res: ServerResponse, orchestrator: Orchestrator): void
   res.end(JSON.stringify(metrics));
 }
 
+function handleBars(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+  orchestrator: Orchestrator,
+): void {
+  const symbol = url.searchParams.get('symbol') ?? 'SPY';
+  const timeframe = url.searchParams.get('timeframe') ?? '5Min';
+  const now = new Date();
+  const start = url.searchParams.get('start') ?? new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const end = url.searchParams.get('end') ?? now.toISOString();
+
+  orchestrator.alpacaClient
+    .getBars(symbol, timeframe, start, end)
+    .then((bars) => {
+      const candles = bars.map((b) => ({
+        time: Math.floor(new Date(b.t).getTime() / 1000),
+        open: b.o,
+        high: b.h,
+        low: b.l,
+        close: b.c,
+        volume: b.v,
+      }));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(candles));
+    })
+    .catch((err) => {
+      logger.error({ err: (err as Error).message, symbol }, 'Failed to fetch bars');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to fetch bars' }));
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -185,14 +232,11 @@ async function main(): Promise<void> {
 
   // Load configuration
   const config = loadConfig();
-  logger.info({ port: config.enginePort }, 'Configuration loaded');
+  logger.info({ port: config.enginePort, simulationMode: config.simulationMode }, 'Configuration loaded');
 
-  // Initialize Alpaca client
+  // Initialize components — conditional on simulation mode
   const alpacaClient = new AlpacaClient(config, logger);
   const marketDataStream = new MarketDataStream(config, alpacaClient, logger);
-  const orderManager = new OrderManager(config, alpacaClient, logger);
-
-  // Initialize engine components
   const bus = new EventBus(logger);
   const state = new State(logger);
   const strategyRunner = new StrategyRunner(logger);
@@ -200,12 +244,47 @@ async function main(): Promise<void> {
   const configPoller = new ConfigPoller(config, bus, logger);
   const performanceTracker = new PerformanceTracker();
 
-  // Create orchestrator
+  // Prevent unhandled 'error' events from crashing the process
+  marketDataStream.on('error' as any, (err: Error) => {
+    logger.warn({ err: err.message }, 'MarketDataStream error (suppressed)');
+  });
+
+  let orderManager: OrderManager | MockOrderManager;
+  let simulationController: SimulationController | null = null;
+
+  if (config.simulationMode) {
+    logger.info('========================================');
+    logger.info('  SIMULATION MODE ACTIVE');
+    logger.info('========================================');
+
+    simulationController = new SimulationController(marketDataStream, config, logger);
+    orderManager = new MockOrderManager(simulationController, logger);
+
+    // Load historical data for the target date
+    const symbols = ['SPY', 'QQQ', 'IWM', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA'];
+    const targetDate = config.simulationDate ?? getPreviousTradingDay();
+    logger.info({ targetDate, speed: config.simulationSpeed, symbols: symbols.length }, 'Loading simulation data');
+
+    const barCount = await simulationController.loadData(
+      symbols,
+      targetDate,
+      config.alpacaApiKey,
+      config.alpacaSecretKey,
+    );
+
+    if (barCount === 0) {
+      logger.error({ targetDate }, 'No bars loaded for simulation date — is this a trading day?');
+    }
+  } else {
+    orderManager = new OrderManager(config, alpacaClient, logger);
+  }
+
+  // Create orchestrator (MockOrderManager is structurally compatible)
   const orchestrator = new Orchestrator(
     config,
     alpacaClient,
     marketDataStream,
-    orderManager,
+    orderManager as OrderManager,
     bus,
     state,
     strategyRunner,
@@ -229,6 +308,36 @@ async function main(): Promise<void> {
 
   // Start orchestrator
   await orchestrator.start();
+
+  // In simulation mode, pre-feed warmup bars then start replay
+  if (simulationController) {
+    const simCtrl = simulationController;
+    bus.once('warmup-complete', () => {
+      logger.info('Warmup complete — bulk-loading initial bars and starting simulation replay');
+
+      // Bulk-load the first 100 bars per symbol instantly (no timer delay)
+      // This primes the barBuffer so strategies have data from tick #1
+      simCtrl.bulkReplay(100);
+
+      // Prime all strategies and reset health (clear any misses from warmup period)
+      for (let i = 0; i <= 4; i++) {
+        strategyRunner.checkPrimed(i as 0 | 1 | 2 | 3 | 4, 100);
+        strategyRunner.resetHealth(i as 0 | 1 | 2 | 3 | 4);
+      }
+
+      // Now start the timed replay for remaining bars
+      simCtrl.startReplay();
+
+      // Reset health again after a delay to clear any misses accumulated
+      // during the first few ticks before bars arrive
+      setTimeout(() => {
+        for (let i = 0; i <= 4; i++) {
+          strategyRunner.resetHealth(i as 0 | 1 | 2 | 3 | 4);
+        }
+        logger.info('Simulation: strategy health reset after initial replay period');
+      }, 2000);
+    });
+  }
 
   // Graceful shutdown
   const shutdown = async (signal: string): Promise<void> => {

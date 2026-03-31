@@ -7,11 +7,13 @@ import {
   fetchOrders,
   fetchStrategies,
   fetchWatchdogStatus,
+  fetchBars,
   type Account,
   type Position,
   type Order,
   type StrategyMetrics,
   type WatchdogStatus,
+  type CandleData,
 } from '@/lib/api';
 
 export function useAccount() {
@@ -56,5 +58,14 @@ export function useWatchdogStatus() {
     queryFn: fetchWatchdogStatus,
     staleTime: 5000,
     refetchInterval: 10000,
+  });
+}
+
+export function useBars(symbol: string, timeframe = '5Min') {
+  return useQuery<CandleData[]>({
+    queryKey: ['bars', symbol, timeframe],
+    queryFn: () => fetchBars(symbol, timeframe),
+    staleTime: 30000,
+    refetchInterval: 60000,
   });
 }

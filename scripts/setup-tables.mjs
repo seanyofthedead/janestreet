@@ -1,23 +1,25 @@
-import {
-  DynamoDBClient,
-  CreateTableCommand,
-  ListTablesCommand,
-  type CreateTableCommandInput,
-} from '@aws-sdk/client-dynamodb';
+import { DynamoDBClient, CreateTableCommand, ListTablesCommand } from '@aws-sdk/client-dynamodb';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
+import { Agent } from 'http';
 
 const endpoint = process.env.DYNAMODB_ENDPOINT || 'http://127.0.0.1:8000';
 const region = process.env.AWS_REGION || 'us-east-1';
 
 const client = new DynamoDBClient({
   region,
-  ...(endpoint ? { endpoint } : {}),
+  endpoint,
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'local',
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'local',
   },
+  requestHandler: new NodeHttpHandler({
+    httpAgent: new Agent({ family: 4 }),
+    connectionTimeout: 5000,
+    socketTimeout: 5000,
+  }),
 });
 
-const tables: CreateTableCommandInput[] = [
+const tables = [
   {
     TableName: 'trading-state',
     KeySchema: [
@@ -54,14 +56,14 @@ const tables: CreateTableCommandInput[] = [
   },
 ];
 
-async function main(): Promise<void> {
+async function main() {
   console.log(`Setting up DynamoDB tables at ${endpoint}...`);
 
   const existing = await client.send(new ListTablesCommand({}));
   const existingNames = new Set(existing.TableNames ?? []);
 
   for (const tableDef of tables) {
-    const name = tableDef.TableName!;
+    const name = tableDef.TableName;
     if (existingNames.has(name)) {
       console.log(`  Table "${name}" already exists — skipping.`);
       continue;
@@ -69,13 +71,12 @@ async function main(): Promise<void> {
     try {
       await client.send(new CreateTableCommand(tableDef));
       console.log(`  Created table "${name}".`);
-    } catch (err: unknown) {
-      const error = err as Error;
-      if (error.name === 'ResourceInUseException') {
+    } catch (err) {
+      if (err.name === 'ResourceInUseException') {
         console.log(`  Table "${name}" already exists — skipping.`);
       } else {
-        console.error(`  Failed to create table "${name}":`, error.message);
-        throw error;
+        console.error(`  Failed to create table "${name}":`, err.message);
+        throw err;
       }
     }
   }

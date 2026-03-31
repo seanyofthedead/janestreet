@@ -1,43 +1,25 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-
-interface CandleData {
-  time: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-}
-
-interface TradeMarker {
-  time: string;
-  position: 'aboveBar' | 'belowBar';
-  color: string;
-  shape: 'arrowDown' | 'arrowUp';
-  text: string;
-}
+import { useBars } from '@/lib/hooks/use-trading-data';
 
 interface PriceChartProps {
   symbol: string;
-  candles?: CandleData[];
-  trades?: TradeMarker[];
 }
 
-export function PriceChart({ symbol, candles = [], trades = [] }: PriceChartProps) {
+export function PriceChart({ symbol }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ReturnType<typeof import('lightweight-charts').createChart> | null>(null);
+  const { data: candles, isLoading } = useBars(symbol);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || !candles || candles.length === 0) return;
 
     let mounted = true;
 
-    // Dynamic import for SSR safety
     import('lightweight-charts').then(({ createChart, ColorType }) => {
       if (!mounted || !containerRef.current) return;
 
-      // Clean up previous chart
       if (chartRef.current) {
         chartRef.current.remove();
         chartRef.current = null;
@@ -77,17 +59,9 @@ export function PriceChart({ symbol, candles = [], trades = [] }: PriceChartProp
         wickUpColor: '#22C55E',
       });
 
-      if (candles.length > 0) {
-        candleSeries.setData(candles as Parameters<typeof candleSeries.setData>[0]);
-      }
-
-      if (trades.length > 0) {
-        candleSeries.setMarkers(trades as Parameters<typeof candleSeries.setMarkers>[0]);
-      }
-
+      candleSeries.setData(candles as Parameters<typeof candleSeries.setData>[0]);
       chart.timeScale().fitContent();
 
-      // Resize observer
       const ro = new ResizeObserver((entries) => {
         for (const entry of entries) {
           const { width } = entry.contentRect;
@@ -108,13 +82,18 @@ export function PriceChart({ symbol, candles = [], trades = [] }: PriceChartProp
         chartRef.current = null;
       }
     };
-  }, [candles, trades]);
+  }, [candles]);
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
       <h2 className="text-sm font-medium text-gray-400 mb-4">{symbol} Price Chart</h2>
       <div ref={containerRef} className="w-full" />
-      {candles.length === 0 && (
+      {isLoading && (
+        <div className="flex items-center justify-center h-[300px] text-gray-600 text-sm">
+          Loading chart data...
+        </div>
+      )}
+      {!isLoading && (!candles || candles.length === 0) && (
         <div className="flex items-center justify-center h-[300px] text-gray-600 text-sm">
           No chart data available
         </div>

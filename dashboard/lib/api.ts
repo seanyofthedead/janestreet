@@ -64,21 +64,11 @@ export interface StrategyMetrics {
 }
 
 export interface WatchdogStatus {
-  running: boolean;
-  last_heartbeat: string;
-  circuit_breakers: {
-    drawdown_pct: number;
-    drawdown_limit: number;
-    daily_loss_pct: number;
-    daily_loss_limit: number;
-    exposure_pct: number;
-    exposure_limit: number;
-    cash_reserve_pct: number;
-    cash_reserve_min: number;
-    pdt_trades_remaining: number;
-    any_triggered: boolean;
-  };
-  kill_switch_active: boolean;
+  status: 'healthy' | 'degraded' | 'critical' | 'kill-triggered';
+  consecutiveMisses: number;
+  lastCheckTime: string;
+  dailyPnl: number | null;
+  orderRate: number | null;
 }
 
 export interface Quote {
@@ -125,4 +115,19 @@ export function triggerKillSwitch(apiKey: string): Promise<{ success: boolean; m
 export function fetchQuotes(symbols: string[]): Promise<Quote[]> {
   const query = symbols.join(',');
   return fetchJson<Quote[]>(`${ENGINE_URL}/api/quotes?symbols=${encodeURIComponent(query)}`);
+}
+
+export interface CandleData {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export function fetchBars(symbol: string, timeframe = '5Min'): Promise<CandleData[]> {
+  return fetchJson<CandleData[]>(
+    `${ENGINE_URL}/api/bars?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`
+  );
 }

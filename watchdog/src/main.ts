@@ -25,6 +25,17 @@ function main(): void {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://127.0.0.1:${config.watchdogPort}`);
 
+    // CORS headers for dashboard
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key');
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
     // GET /watchdog-alive — liveness probe for the engine to poll
     if (req.method === 'GET' && url.pathname === '/watchdog-alive') {
       res.writeHead(200, { 'Content-Type': 'application/json' });

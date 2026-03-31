@@ -1,63 +1,28 @@
 'use client';
 
 import { useWatchdogStatus } from '@/lib/hooks/use-trading-data';
+import { useAccount } from '@/lib/hooks/use-trading-data';
 
-function ProgressBar({
-  label,
-  value,
-  limit,
-  unit = '%',
-  invertColor = false,
-}: {
-  label: string;
-  value: number;
-  limit: number;
-  unit?: string;
-  invertColor?: boolean;
-}) {
-  const pct = limit > 0 ? Math.min((value / limit) * 100, 100) : 0;
-  let barColor: string;
-  if (invertColor) {
-    // Lower is worse (e.g., cash reserve)
-    barColor = pct > 50 ? 'bg-green-500' : pct > 25 ? 'bg-yellow-500' : 'bg-red-500';
-  } else {
-    // Higher is worse (e.g., drawdown, loss)
-    barColor = pct < 50 ? 'bg-green-500' : pct < 80 ? 'bg-yellow-500' : 'bg-red-500';
-  }
-
-  return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-xs">
-        <span className="text-gray-400">{label}</span>
-        <span className="text-gray-300 font-mono">
-          {value.toFixed(1)}{unit} / {limit.toFixed(1)}{unit}
-        </span>
-      </div>
-      <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all duration-500 ${barColor}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function CircuitBreakerIndicator({ triggered, label }: { triggered: boolean; label: string }) {
+function StatusIndicator({ status }: { status: string }) {
+  const colors: Record<string, string> = {
+    healthy: 'bg-green-500',
+    degraded: 'bg-yellow-500 animate-pulse',
+    critical: 'bg-red-500 animate-pulse',
+    'kill-triggered': 'bg-red-600 animate-pulse',
+  };
   return (
     <div className="flex items-center gap-2">
-      <div
-        className={`w-3 h-3 rounded-full ${triggered ? 'bg-red-500 animate-pulse' : 'bg-green-500'}`}
-      />
-      <span className="text-xs text-gray-300">{label}</span>
+      <div className={`w-3 h-3 rounded-full ${colors[status] ?? 'bg-gray-500'}`} />
+      <span className="text-xs text-gray-300 capitalize">{status.replace('-', ' ')}</span>
     </div>
   );
 }
 
 export function RiskDashboard() {
-  const { data: status, isLoading, error } = useWatchdogStatus();
+  const { data: status, isLoading: wdLoading, error: wdError } = useWatchdogStatus();
+  const { data: account } = useAccount();
 
-  if (isLoading) {
+  if (wdLoading) {
     return (
       <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
         <h2 className="text-sm font-medium text-gray-400 mb-4">Risk Monitor</h2>
@@ -70,7 +35,7 @@ export function RiskDashboard() {
     );
   }
 
-  if (error || !status) {
+  if (wdError || !status) {
     return (
       <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
         <h2 className="text-sm font-medium text-gray-400 mb-4">Risk Monitor</h2>
@@ -79,13 +44,15 @@ export function RiskDashboard() {
     );
   }
 
-  const cb = status.circuit_breakers;
+  const isKilled = status.status === 'kill-triggered';
+  const dailyPnl = status.dailyPnl ?? account?.daily_pnl ?? 0;
+  const equity = account?.equity ?? 0;
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-sm font-medium text-gray-400">Risk Monitor</h2>
-        {status.kill_switch_active && (
+        {isKilled && (
           <span className="px-2 py-1 text-xs bg-red-900/80 text-red-300 border border-red-700 rounded animate-pulse">
             KILL SWITCH ACTIVE
           </span>
@@ -93,44 +60,55 @@ export function RiskDashboard() {
       </div>
 
       <div className="space-y-4">
-        <ProgressBar
-          label="Drawdown"
-          value={cb.drawdown_pct}
-          limit={cb.drawdown_limit}
-        />
-        <ProgressBar
-          label="Daily Loss"
-          value={cb.daily_loss_pct}
-          limit={cb.daily_loss_limit}
-        />
-        <ProgressBar
-          label="Exposure"
-          value={cb.exposure_pct}
-          limit={cb.exposure_limit}
-        />
-        <ProgressBar
-          label="Cash Reserve"
-          value={cb.cash_reserve_pct}
-          limit={cb.cash_reserve_min}
-          invertColor
-        />
+        {/* Watchdog Status */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-gray-400">Watchdog</span>
+          <StatusIndicator status={status.status} />
+        </div>
 
-        <div className="pt-2 border-t border-gray-800">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-gray-400">PDT Trades Remaining</span>
-            <span className={`text-sm font-semibold ${cb.pdt_trades_remaining <= 1 ? 'text-red-400' : cb.pdt_trades_remaining <= 2 ? 'text-yellow-400' : 'text-green-400'}`}>
-              {cb.pdt_trades_remaining}
+        {/* Last Check */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-gray-400">Last Check</span>
+          <span className="text-xs text-gray-300 font-mono">
+            {new Date(status.lastCheckTime).toLocaleTimeString()}
+          </span>
+        </div>
+
+        {/* Missed Heartbeats */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-gray-400">Missed Heartbeats</span>
+          <span className={`text-sm font-semibold ${status.consecutiveMisses > 0 ? 'text-yellow-400' : 'text-green-400'}`}>
+            {status.consecutiveMisses}
+          </span>
+        </div>
+
+        <div className="pt-2 border-t border-gray-800" />
+
+        {/* Daily P&L */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-gray-400">Daily P&L</span>
+          <span className={`text-sm font-semibold font-mono ${dailyPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            {dailyPnl >= 0 ? '+' : ''}${dailyPnl.toFixed(2)}
+          </span>
+        </div>
+
+        {/* Equity */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-gray-400">Equity</span>
+          <span className="text-sm font-semibold text-white font-mono">
+            ${equity.toFixed(2)}
+          </span>
+        </div>
+
+        {/* Order Rate */}
+        {status.orderRate !== null && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-400">Order Rate</span>
+            <span className="text-sm font-semibold text-white font-mono">
+              {status.orderRate.toFixed(1)}/min
             </span>
           </div>
-        </div>
-
-        <div className="pt-2 border-t border-gray-800 space-y-2">
-          <p className="text-xs text-gray-500 uppercase tracking-wide">Circuit Breakers</p>
-          <CircuitBreakerIndicator
-            triggered={cb.any_triggered}
-            label={cb.any_triggered ? 'Breaker Triggered' : 'All Clear'}
-          />
-        </div>
+        )}
       </div>
     </div>
   );

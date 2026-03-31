@@ -24,26 +24,54 @@ describeIntegration('Full-cycle integration tests', () => {
     expect(typeof body).toBe('object');
   });
 
-  it('Engine /account returns portfolio data', async () => {
-    const res = await fetch(`${ENGINE_URL}/account`);
+  it('Engine /api/account returns portfolio data', async () => {
+    const res = await fetch(`${ENGINE_URL}/api/account`);
     expect(res.ok).toBe(true);
     const body = await res.json();
     expect(body).toBeDefined();
     expect(typeof body).toBe('object');
+    // Verify snake_case fields expected by dashboard
+    expect(typeof body.equity).toBe('number');
+    expect(body.buying_power).toBeDefined();
+    expect(body.daily_pnl).toBeDefined();
+    expect(body.phase).toBeDefined();
+    expect(body.currency).toBe('USD');
   });
 
-  it('Engine /positions returns an array', async () => {
-    const res = await fetch(`${ENGINE_URL}/positions`);
+  it('Engine /api/positions returns an array', async () => {
+    const res = await fetch(`${ENGINE_URL}/api/positions`);
     expect(res.ok).toBe(true);
     const body = await res.json();
     expect(Array.isArray(body)).toBe(true);
   });
 
-  it('Engine /orders returns an array', async () => {
-    const res = await fetch(`${ENGINE_URL}/orders`);
+  it('Engine /api/orders returns an array', async () => {
+    const res = await fetch(`${ENGINE_URL}/api/orders`);
     expect(res.ok).toBe(true);
     const body = await res.json();
     expect(Array.isArray(body)).toBe(true);
+  });
+
+  it('Engine /api/strategies returns all 5 strategies', async () => {
+    const res = await fetch(`${ENGINE_URL}/api/strategies`);
+    expect(res.ok).toBe(true);
+    const body = await res.json();
+    expect(Array.isArray(body)).toBe(true);
+    expect(body.length).toBe(5);
+    // Verify each strategy has required fields
+    for (const s of body) {
+      expect(typeof s.name).toBe('string');
+      expect(typeof s.id).toBe('number');
+      expect(typeof s.isHealthy).toBe('boolean');
+    }
+  });
+
+  it('Watchdog /status returns health data', async () => {
+    const res = await fetch(`${WATCHDOG_URL}/status`);
+    expect(res.ok).toBe(true);
+    const body = await res.json();
+    expect(body).toBeDefined();
+    expect(typeof body).toBe('object');
   });
 
   it('Watchdog /watchdog-alive responds', async () => {
