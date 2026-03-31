@@ -53,8 +53,8 @@ export class ConflictResolver {
         continue;
       }
 
-      // Sort using OCaml compare_priority (highest confidence first, then strategy priority)
-      symbolSignals.sort((a, b) => Signal.compare_priority(a, b));
+      // Sort by confidence descending (highest confidence wins)
+      symbolSignals.sort((a, b) => b.strength._0 - a.strength._0);
 
       const winner = symbolSignals[0]!;
 

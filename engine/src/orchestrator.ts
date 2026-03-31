@@ -420,6 +420,8 @@ export class Orchestrator {
     // 3. Resolve conflicts
     const resolved = this.conflictResolver.resolve(signals);
 
+    this.logger.info({ rawSignals: signals.length, resolved: resolved.length }, 'Signal resolution');
+
     // 4. Run each signal through risk engine
     const riskConfig = this.configPoller.toOcamlRiskConfig();
     const portfolio = this.state.toOcamlPortfolio();
@@ -437,6 +439,13 @@ export class Orchestrator {
         this.state.dailyPnl,
         this.state.peakEquity,
       );
+
+      // Log risk decision
+      this.logger.info({
+        symbol: signal.symbol,
+        side: signal.side === 0 ? 'buy' : 'sell',
+        riskDecision: JSON.stringify(riskDecision),
+      }, 'Risk engine decision');
 
       // Check risk decision
       if (typeof riskDecision === 'number' && riskDecision === 0) {

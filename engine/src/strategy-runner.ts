@@ -76,11 +76,13 @@ function meanReversionSignal(data: SymbolMarketData, regime: Regime): StrategySi
   const sma = data.bars.slice(-20).reduce((sum, b) => sum + b.c, 0) / 20;
   const deviation = (data.price - sma) / sma;
 
-  if (Math.abs(deviation) < 0.01) return null;
+  // Intraday 1-min bars: 0.02% deviation is meaningful for SPY
+  if (Math.abs(deviation) < 0.0002) return null;
 
   const side = deviation > 0 ? 1 : 0; // Sell if above mean, buy if below
   const absDeviation = Math.abs(deviation);
-  const conf = Math.min(absDeviation * 10, 0.95);
+  // Scale: 0.02% → 0.4 (Moderate), 0.04% → 0.8 (Strong)
+  const conf = Math.min(absDeviation * 2000, 0.95);
 
   const strengthTag = conf >= 0.7 ? 0 : conf >= 0.4 ? 1 : 2;
 
@@ -104,10 +106,12 @@ function momentumSignal(data: SymbolMarketData, regime: Regime): StrategySignal 
   const olderAvg = older.reduce((s, b) => s + b.c, 0) / older.length;
 
   const momentum = (recentAvg - olderAvg) / olderAvg;
-  if (Math.abs(momentum) < 0.02) return null;
+  // Intraday 1-min bars: 0.01% trend is detectable
+  if (Math.abs(momentum) < 0.0001) return null;
 
   const side = momentum > 0 ? 0 : 1;
-  const conf = Math.min(Math.abs(momentum) * 5, 0.9);
+  // Scale: 0.02% → 0.4 (Moderate), 0.04% → 0.8 (Strong)
+  const conf = Math.min(Math.abs(momentum) * 2000, 0.9);
   const strengthTag = conf >= 0.7 ? 0 : conf >= 0.4 ? 1 : 2;
 
   return {
@@ -132,17 +136,18 @@ function sectorRotationSignal(data: SymbolMarketData, regime: Regime): StrategyS
   const longReturn = (currentPrice - longTermPrice) / longTermPrice;
   const shortReturn = (currentPrice - shortTermPrice) / shortTermPrice;
 
-  // Buy on pullback in uptrend, sell on bounce in downtrend
+  // Intraday 1-min bars: 0.02% long trend with any short pullback
   let side: number;
-  if (longReturn > 0.02 && shortReturn < -0.01) {
+  if (longReturn > 0.0002 && shortReturn < -0.0001) {
     side = 0; // Buy: dip in uptrend
-  } else if (longReturn < -0.02 && shortReturn > 0.01) {
+  } else if (longReturn < -0.0002 && shortReturn > 0.0001) {
     side = 1; // Sell: rally in downtrend
   } else {
     return null;
   }
 
-  const conf = Math.min(Math.abs(longReturn) * 4, 0.8);
+  // Scale: 0.02% → 0.4 (Moderate), 0.04% → 0.8 (Strong)
+  const conf = Math.min(Math.abs(longReturn) * 2000, 0.8);
   const strengthTag = conf >= 0.7 ? 0 : conf >= 0.4 ? 1 : 2;
 
   return {
@@ -150,7 +155,7 @@ function sectorRotationSignal(data: SymbolMarketData, regime: Regime): StrategyS
     symbol: data.symbol,
     side,
     strength: { TAG: strengthTag, _0: conf },
-    target_price: shortTermPrice, // Mean-revert to recent level
+    target_price: shortTermPrice,
     max_position_pct: regime === 3 ? 0.03 : 0.06,
     timestamp: Date.now(),
   };
@@ -174,12 +179,12 @@ function calendarSeasonalSignal(data: SymbolMarketData, regime: Regime): Strateg
   const isSellInMay = month >= 5 && month <= 10;
 
   if (isTurnOfMonth) {
-    // Turn-of-month: weak Buy
+    // Turn-of-month: Moderate Buy — strongest seasonal signal
     return {
       strategy: 2,
       symbol: data.symbol,
       side: 0,
-      strength: { TAG: 2, _0: 0.55 }, // Weak — low-conviction seasonal edge
+      strength: { TAG: 1, _0: 0.55 }, // Moderate
       target_price: data.price * 1.005,
       max_position_pct: 0.04,
       timestamp: Date.now(),
@@ -187,24 +192,24 @@ function calendarSeasonalSignal(data: SymbolMarketData, regime: Regime): Strateg
   }
 
   if (isSellInMay) {
-    // Summer months: weak Sell
+    // Summer months: Moderate Sell
     return {
       strategy: 2,
       symbol: data.symbol,
       side: 1,
-      strength: { TAG: 2, _0: 0.45 }, // Weak
+      strength: { TAG: 1, _0: 0.45 }, // Moderate
       target_price: data.price * 0.995,
       max_position_pct: 0.04,
       timestamp: Date.now(),
     };
   }
 
-  // Nov-Apr: weak Buy
+  // Nov-Apr: Moderate Buy
   return {
     strategy: 2,
     symbol: data.symbol,
     side: 0,
-    strength: { TAG: 2, _0: 0.50 }, // Weak
+    strength: { TAG: 1, _0: 0.50 }, // Moderate
     target_price: data.price * 1.003,
     max_position_pct: 0.04,
     timestamp: Date.now(),
@@ -218,13 +223,14 @@ function marketMakingSignal(data: SymbolMarketData, _regime: Regime): StrategySi
   const midpoint = (data.ask + data.bid) / 2;
   const spreadPct = spread / midpoint;
 
-  // Only generate signals when spread is wide enough
-  if (spreadPct < 0.002) return null;
+  // Intraday: any meaningful spread is tradeable (IEX often has wider spreads)
+  if (spreadPct < 0.0001) return null;
 
   // Market making buys at bid, sells at ask
   const side = Math.random() > 0.5 ? 0 : 1;
   const price = side === 0 ? data.bid + spread * 0.25 : data.ask - spread * 0.25;
-  const conf = Math.min(spreadPct * 50, 0.8);
+  // Scale for tighter spreads: 0.01% → 0.5 (Moderate), 0.02% → 0.8 (Strong)
+  const conf = Math.min(spreadPct * 5000, 0.8);
   const strengthTag = conf >= 0.7 ? 0 : conf >= 0.4 ? 1 : 2;
 
   return {
@@ -242,7 +248,7 @@ function marketMakingSignal(data: SymbolMarketData, _regime: Regime): StrategySi
 // StrategyRunner
 // ---------------------------------------------------------------------------
 
-const MISS_THRESHOLD = process.env.SIMULATION_MODE === 'true' ? 300 : 30;
+const MISS_THRESHOLD = process.env.SIMULATION_MODE === 'true' ? 300 : 300;
 const RECOVERY_THRESHOLD = 10;
 const MIN_BARS_FOR_PRIMED: Record<StrategyId, number> = {
   0: 20,  // mean reversion needs 20 bars
