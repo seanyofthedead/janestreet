@@ -16,8 +16,6 @@ export async function GET(_request: NextRequest) {
       try {
         upstream = await fetch(ENGINE_SSE_URL, {
           headers: { Accept: 'text/event-stream' },
-          // @ts-expect-error -- Node fetch supports signal but types may not match
-          signal: AbortSignal.timeout(0), // no timeout
         });
 
         if (!upstream.ok || !upstream.body) {

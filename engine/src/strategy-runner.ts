@@ -308,15 +308,25 @@ export class StrategyRunner {
     marketData: SymbolMarketData[],
     phase: Phase,
     regime: Regime,
+    enabledStrategies?: Record<string, boolean>,
   ): StrategySignal[] {
     const signals: StrategySignal[] = [];
 
     for (let strategyId = 0; strategyId <= 4; strategyId++) {
       const id = strategyId as StrategyId;
 
-      // Check if strategy is enabled for this account phase
+      // Check if strategy is enabled for this account phase (safety floor)
       if (!Types.strategy_enabled_for_phase(phase, id)) {
         continue;
+      }
+
+      // Check config-based strategy toggle
+      if (enabledStrategies) {
+        const name = STRATEGY_NAMES[id];
+        if (name && enabledStrategies[name] === false) {
+          this.logger.debug({ strategy: name }, 'Strategy disabled by config');
+          continue;
+        }
       }
 
       const health = this.health.get(id)!;

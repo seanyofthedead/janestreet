@@ -182,10 +182,208 @@ export class Orchestrator {
     this.logger.info('Orchestrator stopped');
   }
 
+  /** Acknowledge a halt, performing pre-validation and setting the flag */
+  async acknowledgeHalt(): Promise<{ acknowledged: boolean; engineState: string; preValidationSkipped?: boolean }> {
+    // Verify engine is in Halted state
+    const engineState = this.state.engineState as any;
+    const isHalted = typeof engineState === 'object' && engineState !== null && engineState.TAG === 1;
+    if (!isHalted) {
+      throw new Error('Engine is not in Halted state');
+    }
+
+    // Pre-validation: check if danger conditions persist
+    let preValidationSkipped = false;
+    try {
+      const account = await this.alpacaClient.getAccount();
+      const equity = parseFloat(String(account.equity));
+      const peakEquity = this.state.peakEquity;
+
+      // If equity has dropped more than 20% from peak, danger persists
+      if (peakEquity > 0 && equity < peakEquity * 0.80) {
+        throw new Error(
+          `Cannot acknowledge halt: danger conditions persist (equity ${equity.toFixed(2)} is more than 20% below peak ${peakEquity.toFixed(2)})`,
+        );
+      }
+    } catch (err) {
+      // If it's our own danger-conditions error, re-throw
+      if ((err as Error).message.includes('danger conditions persist')) {
+        throw err;
+      }
+      // Alpaca unreachable — proceed with flag
+      this.logger.warn({ err: (err as Error).message }, 'Alpaca unreachable during halt acknowledgment, skipping pre-validation');
+      preValidationSkipped = true;
+    }
+
+    // Set acknowledgment in config poller (persists to DynamoDB)
+    await this.configPoller.setAcknowledgment();
+
+    // Emit halt-acknowledged event
+    this.bus.emit('halt-acknowledged', {
+      timestamp: Date.now(),
+      preValidationSkipped: preValidationSkipped || undefined,
+    });
+
+    return {
+      acknowledged: true,
+      engineState: this.state.engineStateName,
+      preValidationSkipped: preValidationSkipped || undefined,
+    };
+  }
+
+  /**
+   * Handle an external kill notification (e.g. from watchdog via POST /api/notify-kill).
+   * Stops the tick loop, transitions to Halted, and emits circuit-breaker event.
+   */
+  async notifyExternalKill(
+    reason: string,
+    killErrors?: string[],
+  ): Promise<{ acknowledged: boolean; engineState: string }> {
+    // Stop the tick loop
+    if (this.tickTimer) {
+      clearInterval(this.tickTimer);
+      this.tickTimer = null;
+    }
+    this.running = false;
+
+    // Emit circuit-breaker event
+    this.bus.emit('circuit-breaker', {
+      previousState: this.state.engineStateName,
+      newState: 'Halted',
+      reason,
+      killErrors,
+      timestamp: Date.now(),
+    });
+
+    // Transition to Halted via OCaml state machine (same pattern as handleKillSwitch)
+    const result = EngineState.apply_transition(this.state.engineState, {
+      TAG: 1, // Kill_triggered
+      _0: reason,
+    });
+    if (result.TAG === 0) {
+      this.transitionTo(result._0, EngineState.to_string(result._0));
+    }
+
+    return { acknowledged: true, engineState: this.state.engineStateName };
+  }
+
   /** Notify that watchdog is alive (called from health endpoint or external signal) */
   notifyWatchdogAlive(): void {
     this.watchdogAlive = true;
     this.state.lastHeartbeat = Date.now();
+  }
+
+  // -----------------------------------------------------------------------
+  // Order cancel / Position close
+  // -----------------------------------------------------------------------
+
+  /**
+   * Cancel an order by client_order_id.
+   * Delegates to OrderManager and emits an 'order-canceled' event.
+   */
+  async cancelOrder(clientOrderId: string): Promise<{ clientOrderId: string; alpacaOrderId: string; status: string; engineState: string }> {
+    const result = await this.orderManager.cancelOrder(clientOrderId);
+
+    this.bus.emit('order-canceled', {
+      clientOrderId: result.clientOrderId,
+      alpacaOrderId: result.alpacaOrderId,
+      status: result.status,
+      timestamp: Date.now(),
+    });
+
+    return { ...result, engineState: this.state.engineStateName };
+  }
+
+  /**
+   * Close a position by symbol.
+   * Sends close request to Alpaca, records P&L, reconciles state, and emits event.
+   */
+  async closePosition(symbol: string): Promise<{ symbol: string; closedPnl: number; status: string; engineState: string }> {
+    const position = this.state.getPosition(symbol);
+    if (!position) {
+      throw new Error(`No position found for symbol: ${symbol}`);
+    }
+
+    const unrealizedPl = position.unrealizedPl;
+
+    await this.alpacaClient.closePosition(symbol);
+
+    this.performanceTracker.recordTrade('manual_close', unrealizedPl, Date.now());
+
+    try {
+      await this.state.reconcileWithAlpaca(this.alpacaClient);
+    } catch (err) {
+      this.logger.warn({ err: (err as Error).message }, 'Reconciliation after position close failed');
+    }
+
+    this.bus.emit('position-closed', {
+      symbol,
+      closedPnl: unrealizedPl,
+      status: 'close_requested',
+      timestamp: Date.now(),
+    });
+
+    return { symbol, closedPnl: unrealizedPl, status: 'close_requested', engineState: this.state.engineStateName };
+  }
+
+  // -----------------------------------------------------------------------
+  // Strategy toggle
+  // -----------------------------------------------------------------------
+
+  /**
+   * Enable or disable a strategy by ID or name.
+   * Validates phase restrictions when enabling.
+   */
+  async toggleStrategy(
+    idOrName: string,
+    enabled: boolean,
+  ): Promise<{ strategy: string; enabled: boolean; engineState: string }> {
+    // Build lookup for resolving idOrName
+    const nameById: Record<string, string> = {
+      '0': 'Mean_reversion',
+      '1': 'Sector_rotation',
+      '2': 'Calendar_seasonal',
+      '3': 'Momentum',
+      '4': 'Market_making',
+    };
+    const nameByLower: Record<string, string> = {};
+    const idByName: Record<string, number> = {};
+    for (const [id, name] of Object.entries(nameById)) {
+      nameByLower[name.toLowerCase()] = name;
+      idByName[name] = parseInt(id, 10);
+    }
+
+    // Resolve to canonical name
+    const canonicalName = nameById[idOrName] ?? nameByLower[idOrName.toLowerCase()];
+    if (!canonicalName) {
+      throw new Error(`Unknown strategy: ${idOrName}`);
+    }
+    const strategyId = idByName[canonicalName];
+
+    // If enabling, check phase restriction
+    if (enabled) {
+      const phase = Types.phase_of_equity(this.state.equity) as Phase;
+      if (!Types.strategy_enabled_for_phase(phase, strategyId)) {
+        throw new Error(
+          `Strategy ${canonicalName} is blocked by phase restriction (current phase: ${phase})`,
+        );
+      }
+    }
+
+    // Persist to DynamoDB and refresh config
+    await this.configPoller.setStrategyEnabled(canonicalName, enabled);
+
+    // Emit event
+    this.bus.emit('strategy-toggled', {
+      strategyName: canonicalName,
+      enabled,
+      timestamp: Date.now(),
+    });
+
+    return {
+      strategy: canonicalName,
+      enabled,
+      engineState: this.state.engineStateName,
+    };
   }
 
   // -----------------------------------------------------------------------
@@ -380,17 +578,23 @@ export class Orchestrator {
       this.state.updatePosition(symbol, quote.price);
     }
 
+    // Keep daily P&L current
+    this.state.updateDailyPnl();
+
     // Determine phase and regime
     const phase = Types.phase_of_equity(this.state.equity) as Phase;
     const regime = this.computeRegime();
 
+    // Get enabled strategies config
+    const { enabledStrategies } = this.configPoller.getConfig();
+
     // Process based on current state
     if (EngineState.is_trading_allowed(this.state.engineState)) {
       // TRADING: Full signal processing and order submission
-      await this.processTradingTick(marketData, phase, regime);
+      await this.processTradingTick(marketData, phase, regime, enabledStrategies);
     } else if (currentStateName === 'Read_only' || currentStateName === 'Off_hours') {
       // READ_ONLY / OFF_HOURS: Process data, update indicators, no orders
-      this.strategyRunner.runStrategies(marketData, phase, regime);
+      this.strategyRunner.runStrategies(marketData, phase, regime, enabledStrategies);
     }
     // Cooldown, Halted, Starting, Warming_up: do nothing
   }
@@ -399,9 +603,10 @@ export class Orchestrator {
     marketData: SymbolMarketData[],
     phase: Phase,
     regime: RegimeType,
+    enabledStrategies?: Record<string, boolean>,
   ): Promise<void> {
     // 1. Fan out market data to strategy runner
-    const signals = this.strategyRunner.runStrategies(marketData, phase, regime);
+    const signals = this.strategyRunner.runStrategies(marketData, phase, regime, enabledStrategies);
 
     if (signals.length === 0) return;
 

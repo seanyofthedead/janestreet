@@ -5,7 +5,7 @@
  */
 
 import pino from 'pino';
-import { GetCommand } from '@aws-sdk/lib-dynamodb';
+import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import type { EventBus } from './event-bus.js';
 import type { EngineConfig } from './config.js';
 import { getDynamoClient, TABLE_CONFIG } from './dynamodb.js';
@@ -68,6 +68,28 @@ function defaultRuntimeConfig(): RuntimeConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Strategy name constants
+// ---------------------------------------------------------------------------
+
+const STRATEGY_NAMES: Record<number, string> = {
+  0: 'Mean_reversion',
+  1: 'Sector_rotation',
+  2: 'Calendar_seasonal',
+  3: 'Momentum',
+  4: 'Market_making',
+};
+
+/** Reverse lookup: lowercase name -> canonical name */
+const STRATEGY_NAME_LOOKUP: Record<string, string> = Object.fromEntries(
+  Object.values(STRATEGY_NAMES).map((name) => [name.toLowerCase(), name]),
+);
+
+// Also allow numeric string IDs
+for (const [id, name] of Object.entries(STRATEGY_NAMES)) {
+  STRATEGY_NAME_LOOKUP[id] = name;
+}
+
+// ---------------------------------------------------------------------------
 // ConfigPoller
 // ---------------------------------------------------------------------------
 
@@ -124,6 +146,90 @@ export class ConfigPoller {
   /** Clear the human acknowledgment flag after processing */
   clearAcknowledgment(): void {
     this.current.humanAcknowledged = false;
+  }
+
+  /** Set the human acknowledgment flag and persist to DynamoDB */
+  async setAcknowledgment(): Promise<void> {
+    // Set in-memory flag first
+    this.current.humanAcknowledged = true;
+
+    // Persist to DynamoDB
+    try {
+      const client = getDynamoClient();
+      const result = await client.send(
+        new GetCommand({
+          TableName: TABLE_CONFIG,
+          Key: { key: 'RUNTIME_CONFIG' },
+        }),
+      );
+
+      const item = result.Item ?? { key: 'RUNTIME_CONFIG' };
+      item.humanAcknowledged = true;
+      item.lastUpdated = Date.now();
+
+      await client.send(
+        new PutCommand({
+          TableName: TABLE_CONFIG,
+          Item: item,
+        }),
+      );
+
+      this.logger.info('Human acknowledgment set and persisted to DynamoDB');
+    } catch (err) {
+      this.logger.error({ err: (err as Error).message }, 'Failed to persist acknowledgment to DynamoDB');
+      throw err;
+    }
+  }
+
+  /** Force an immediate config poll from DynamoDB */
+  async forcePoll(): Promise<void> {
+    await this.poll();
+  }
+
+  /** Enable or disable a strategy by name, persisting to DynamoDB */
+  async setStrategyEnabled(strategyName: string, enabled: boolean): Promise<void> {
+    const canonicalName = STRATEGY_NAME_LOOKUP[strategyName.toLowerCase()];
+    if (!canonicalName) {
+      throw new Error(`Unknown strategy: ${strategyName}`);
+    }
+
+    const client = getDynamoClient();
+
+    // Read current config from DynamoDB
+    const result = await client.send(
+      new GetCommand({
+        TableName: TABLE_CONFIG,
+        Key: { key: 'RUNTIME_CONFIG' },
+      }),
+    );
+
+    const item = result.Item ?? { key: 'RUNTIME_CONFIG' };
+    if (!item.enabledStrategies) {
+      item.enabledStrategies = { ...this.current.enabledStrategies };
+    }
+    item.enabledStrategies[canonicalName] = enabled;
+    item.lastUpdated = Date.now();
+
+    // Write back
+    await client.send(
+      new PutCommand({
+        TableName: TABLE_CONFIG,
+        Item: item,
+      }),
+    );
+
+    // Refresh in-memory config
+    try {
+      await this.forcePoll();
+    } catch (err) {
+      this.logger.warn(
+        { err: (err as Error).message, strategy: canonicalName, enabled },
+        'forcePoll failed after setStrategyEnabled, falling back to direct mutation',
+      );
+      this.current.enabledStrategies[canonicalName] = enabled;
+    }
+
+    this.logger.info({ strategy: canonicalName, enabled }, 'Strategy enabled/disabled');
   }
 
   /**

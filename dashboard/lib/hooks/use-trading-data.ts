@@ -56,8 +56,8 @@ export function useWatchdogStatus() {
   return useQuery<WatchdogStatus>({
     queryKey: ['watchdog'],
     queryFn: fetchWatchdogStatus,
-    staleTime: 5000,
-    refetchInterval: 10000,
+    staleTime: 1000,
+    refetchInterval: 2000,
   });
 }
 

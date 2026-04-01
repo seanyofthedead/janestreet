@@ -2,7 +2,7 @@
  * Basic vitest tests for the watchdog.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import http from 'http';
 import type { WatchdogConfig } from '../src/config.js';
 import { KillSwitch } from '../src/kill-switch.js';
@@ -126,5 +126,104 @@ describe('Auth middleware', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// KillSwitch idempotency and engine notification
+// ---------------------------------------------------------------------------
+
+describe('KillSwitch idempotency guard', () => {
+  it('second activate() returns immediately with alreadyActivated', async () => {
+    const config = makeTestConfig();
+    const ks = new KillSwitch(config);
+
+    // Patch the internal alpaca client to avoid real API calls
+    (ks as any).alpaca = {
+      cancelAllOrders: vi.fn().mockResolvedValue(undefined),
+      closeAllPositions: vi.fn().mockResolvedValue(undefined),
+    };
+
+    // Mock fetch for the engine notification
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+
+    try {
+      const first = await ks.activate('test reason');
+      expect(first.success).toBe(true);
+      expect(first.alreadyActivated).toBeUndefined();
+      expect(first.viaEngine).toBe(false);
+      expect(ks.isActivated).toBe(true);
+
+      // Second call should short-circuit
+      const second = await ks.activate('duplicate reason');
+      expect(second.success).toBe(true);
+      expect(second.alreadyActivated).toBe(true);
+      expect(second.errors).toEqual([]);
+
+      // Alpaca methods should only have been called once (from the first activation)
+      expect((ks as any).alpaca.cancelAllOrders).toHaveBeenCalledTimes(1);
+      expect((ks as any).alpaca.closeAllPositions).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+describe('KillSwitch engine notification', () => {
+  it('calls engine notify-kill endpoint after kill', async () => {
+    const config = makeTestConfig({ enginePort: 3001 });
+    const ks = new KillSwitch(config);
+
+    (ks as any).alpaca = {
+      cancelAllOrders: vi.fn().mockResolvedValue(undefined),
+      closeAllPositions: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const originalFetch = globalThis.fetch;
+    const mockFetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    globalThis.fetch = mockFetch;
+
+    try {
+      await ks.activate('loss threshold');
+
+      // fetch should have been called for the engine notification
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [url, opts] = mockFetch.mock.calls[0];
+      expect(url).toBe('http://127.0.0.1:3001/api/notify-kill');
+      expect(opts.method).toBe('POST');
+      expect(opts.headers['X-API-Key']).toBe(config.localApiSecret);
+
+      const body = JSON.parse(opts.body);
+      expect(body.reason).toBe('loss threshold');
+      expect(body.success).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('engine notification failure does not block kill result', async () => {
+    const config = makeTestConfig();
+    const ks = new KillSwitch(config);
+
+    (ks as any).alpaca = {
+      cancelAllOrders: vi.fn().mockResolvedValue(undefined),
+      closeAllPositions: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('Connection refused'));
+
+    try {
+      const result = await ks.activate('engine down test');
+
+      // Kill still succeeds even though notification failed
+      expect(result.success).toBe(true);
+      expect(result.errors).toEqual([]);
+      expect(result.viaEngine).toBe(false);
+      expect(ks.isActivated).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

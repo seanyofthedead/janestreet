@@ -13,10 +13,12 @@ const KILL_TIMEOUT_MS = 5_000;
 
 export class KillSwitch {
   private readonly alpaca: any;
+  private readonly config: WatchdogConfig;
   private readonly logger: pino.Logger;
   private activated = false;
 
   constructor(config: WatchdogConfig, logger?: pino.Logger) {
+    this.config = config;
     this.logger = (logger ?? pino({ name: 'kill-switch' })).child({ component: 'kill-switch' });
 
     // Dynamic require for the CommonJS Alpaca SDK
@@ -45,7 +47,13 @@ export class KillSwitch {
    *
    * Completes within 5 seconds or logs failure.
    */
-  async activate(reason: string): Promise<{ success: boolean; errors: string[] }> {
+  async activate(reason: string): Promise<{ success: boolean; errors: string[]; alreadyActivated?: boolean; viaEngine: boolean }> {
+    // Idempotency guard — if already activated, skip all logic
+    if (this.activated) {
+      this.logger.warn('Kill switch already activated, ignoring duplicate trigger');
+      return { success: true, errors: [], alreadyActivated: true, viaEngine: false };
+    }
+
     this.logger.warn({ reason }, 'KILL SWITCH ACTIVATED');
     this.activated = true;
 
@@ -84,9 +92,27 @@ export class KillSwitch {
     // Step 4: Send SNS alert (stub)
     await this.sendAlert(reason, errors);
 
+    // Best-effort notification to engine
+    try {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 3000);
+      await fetch(`http://127.0.0.1:${this.config.enginePort}/api/notify-kill`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': this.config.localApiSecret,
+        },
+        body: JSON.stringify({ reason, errors, success: errors.length === 0 }),
+        signal: controller.signal,
+      });
+      this.logger.info('Engine notified of kill switch activation');
+    } catch (notifyErr) {
+      this.logger.warn({ err: (notifyErr as Error).message }, 'Failed to notify engine of kill (engine may be down)');
+    }
+
     const success = errors.length === 0;
     this.logger.info({ success, errors }, 'Kill switch sequence complete');
-    return { success, errors };
+    return { success, errors, viaEngine: false };
   }
 
   /**
