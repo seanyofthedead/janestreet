@@ -197,6 +197,33 @@ export class OrderManager extends EventEmitter {
   }
 
   // -----------------------------------------------------------------------
+  // Order Cancellation
+  // -----------------------------------------------------------------------
+
+  /**
+   * Cancel an order by client_order_id.
+   * Looks up the tracked order, validates it is not in a terminal state,
+   * and sends the cancel request to Alpaca.
+   */
+  async cancelOrder(clientOrderId: string): Promise<{ clientOrderId: string; alpacaOrderId: string; status: string }> {
+    const tracked = this.trackedOrders.get(clientOrderId);
+    if (!tracked) {
+      throw new Error(`Order not found: ${clientOrderId}`);
+    }
+
+    const terminalStatuses = ['filled', 'canceled', 'expired', 'rejected'];
+    if (terminalStatuses.includes(tracked.status)) {
+      throw new Error(`Order ${clientOrderId} is in terminal state: ${tracked.status}`);
+    }
+
+    const alpacaOrderId = tracked.id;
+    this.logger.info({ clientOrderId, alpacaOrderId }, 'Cancelling order');
+    await this.client.cancelOrder(alpacaOrderId);
+
+    return { clientOrderId, alpacaOrderId, status: 'cancel_requested' };
+  }
+
+  // -----------------------------------------------------------------------
   // Kill Switch (bypasses rate limiter)
   // -----------------------------------------------------------------------
 

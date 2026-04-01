@@ -16,6 +16,7 @@ import { ConflictResolver } from './conflict-resolver.js';
 import { ConfigPoller } from './config-poller.js';
 import { Orchestrator } from './orchestrator.js';
 import { PerformanceTracker } from './performance-tracker.js';
+import { requireAuth, sendJson, sendError } from './http-utils.js';
 import { SimulationController, getPreviousTradingDay } from './simulation/controller.js';
 import { MockOrderManager } from './simulation/mock-order-manager.js';
 
@@ -46,8 +47,8 @@ function createHttpServer(
 
     // CORS headers for dashboard
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
@@ -55,7 +56,33 @@ function createHttpServer(
       return;
     }
 
+    const method = req.method ?? 'GET';
+
     try {
+      // --- Parameterized routes (checked first) ---
+
+      if (method === 'DELETE' && path.startsWith('/api/orders/')) {
+        handleCancelOrder(req, res, config, orchestrator);
+        return;
+      }
+
+      if (method === 'POST' && path.startsWith('/api/positions/') && path.endsWith('/close')) {
+        handleClosePosition(req, res, config, orchestrator);
+        return;
+      }
+
+      if (method === 'POST' && path === '/api/acknowledge-halt') {
+        handleAcknowledgeHalt(req, res, config, orchestrator);
+        return;
+      }
+
+      if (method === 'POST' && path.startsWith('/api/strategies/') && path.split('/').length === 5) {
+        handleStrategyToggle(req, res, config, orchestrator);
+        return;
+      }
+
+      // --- Exact-match GET routes ---
+
       switch (path) {
         case '/health':
           handleHealth(res, orchestrator);
@@ -134,6 +161,10 @@ function handleSSE(
     'warmup-complete',
     'heartbeat',
     'config-change',
+    'order-canceled',
+    'position-closed',
+    'halt-acknowledged',
+    'strategy-toggled',
   ];
 
   const listeners: Array<{ event: EngineEventName; fn: (...args: unknown[]) => void }> = [];
@@ -189,6 +220,149 @@ function handleStrategies(res: ServerResponse, orchestrator: Orchestrator): void
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(metrics));
 }
+
+// ---------------------------------------------------------------------------
+// Mutating API Handlers (require X-API-Key auth)
+// ---------------------------------------------------------------------------
+
+async function handleCancelOrder(
+  req: IncomingMessage,
+  res: ServerResponse,
+  config: EngineConfig,
+  orchestrator: Orchestrator,
+): Promise<void> {
+  if (!requireAuth(req, config.localApiSecret)) {
+    sendError(res, 401, 'Unauthorized');
+    return;
+  }
+
+  const url = new URL(req.url ?? '/', `http://localhost:${config.enginePort}`);
+  const segments = url.pathname.split('/');
+  // /api/orders/:clientOrderId → segments = ['', 'api', 'orders', clientOrderId]
+  const clientOrderId = segments[3];
+  if (!clientOrderId) {
+    sendError(res, 400, 'Missing order ID');
+    return;
+  }
+
+  try {
+    const result = await orchestrator.cancelOrder(clientOrderId);
+    sendJson(res, 200, { ...result, engineState: orchestrator.state.engineStateName });
+  } catch (err) {
+    const message = (err as Error).message;
+    if (message.includes('not found') || message.includes('Not found')) {
+      sendError(res, 404, message);
+    } else if (message.includes('terminal state')) {
+      sendError(res, 409, message);
+    } else {
+      logger.error({ err: message, clientOrderId }, 'Failed to cancel order');
+      sendError(res, 502, `Alpaca error: ${message}`);
+    }
+  }
+}
+
+async function handleClosePosition(
+  req: IncomingMessage,
+  res: ServerResponse,
+  config: EngineConfig,
+  orchestrator: Orchestrator,
+): Promise<void> {
+  if (!requireAuth(req, config.localApiSecret)) {
+    sendError(res, 401, 'Unauthorized');
+    return;
+  }
+
+  const url = new URL(req.url ?? '/', `http://localhost:${config.enginePort}`);
+  const segments = url.pathname.split('/');
+  // /api/positions/:symbol/close → segments = ['', 'api', 'positions', symbol, 'close']
+  const symbol = segments[3];
+  if (!symbol) {
+    sendError(res, 400, 'Missing symbol');
+    return;
+  }
+
+  try {
+    const result = await orchestrator.closePosition(symbol);
+    sendJson(res, 200, { ...result, engineState: orchestrator.state.engineStateName });
+  } catch (err) {
+    const message = (err as Error).message;
+    if (message.includes('not found') || message.includes('No position')) {
+      sendError(res, 404, message);
+    } else {
+      logger.error({ err: message, symbol }, 'Failed to close position');
+      sendError(res, 502, `Alpaca error: ${message}`);
+    }
+  }
+}
+
+async function handleAcknowledgeHalt(
+  req: IncomingMessage,
+  res: ServerResponse,
+  config: EngineConfig,
+  orchestrator: Orchestrator,
+): Promise<void> {
+  if (!requireAuth(req, config.localApiSecret)) {
+    sendError(res, 401, 'Unauthorized');
+    return;
+  }
+
+  try {
+    const result = await orchestrator.acknowledgeHalt();
+    sendJson(res, 200, result);
+  } catch (err) {
+    const message = (err as Error).message;
+    if (message.includes('not in Halted') || message.includes('danger conditions')) {
+      sendError(res, 409, message);
+    } else {
+      logger.error({ err: message }, 'Failed to acknowledge halt');
+      sendError(res, 500, message);
+    }
+  }
+}
+
+async function handleStrategyToggle(
+  req: IncomingMessage,
+  res: ServerResponse,
+  config: EngineConfig,
+  orchestrator: Orchestrator,
+): Promise<void> {
+  if (!requireAuth(req, config.localApiSecret)) {
+    sendError(res, 401, 'Unauthorized');
+    return;
+  }
+
+  const url = new URL(req.url ?? '/', `http://localhost:${config.enginePort}`);
+  const segments = url.pathname.split('/');
+  // /api/strategies/:id/enable|disable → segments = ['', 'api', 'strategies', id, action]
+  const idOrName = segments[3];
+  const action = segments[4];
+
+  if (!idOrName || (action !== 'enable' && action !== 'disable')) {
+    sendError(res, 400, 'Invalid strategy toggle path. Use /api/strategies/:id/enable or /disable');
+    return;
+  }
+
+  const enabled = action === 'enable';
+
+  try {
+    const result = await orchestrator.toggleStrategy(idOrName, enabled);
+    sendJson(res, 200, result);
+  } catch (err) {
+    const message = (err as Error).message;
+    if (message.includes('Unknown strategy')) {
+      sendError(res, 404, message);
+    } else if (message.includes('phase restriction') || message.includes('blocked by phase')) {
+      sendError(res, 409, message);
+    } else {
+      logger.error({ err: message, idOrName, action }, 'Failed to toggle strategy');
+      sendError(res, 500, message);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Read-only API Handlers
+// ---------------------------------------------------------------------------
 
 function handleBars(
   _req: IncomingMessage,
@@ -304,6 +478,10 @@ async function main(): Promise<void> {
     logger.info(`  GET /api/positions  — current positions`);
     logger.info(`  GET /api/orders     — active orders`);
     logger.info(`  GET /api/strategies — strategy metrics`);
+    logger.info(`  DELETE /api/orders/:id    — cancel order (auth)`);
+    logger.info(`  POST /api/positions/:sym/close — close position (auth)`);
+    logger.info(`  POST /api/acknowledge-halt     — ack halt (auth)`);
+    logger.info(`  POST /api/strategies/:id/enable|disable (auth)`);
   });
 
   // Start orchestrator

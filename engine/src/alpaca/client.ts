@@ -194,6 +194,16 @@ export class AlpacaClient {
     return this.rateLimitedCall(() => this.alpaca.closeAllPositions());
   }
 
+  async cancelOrder(alpacaOrderId: string): Promise<unknown> {
+    this.logger.info({ alpacaOrderId }, 'Cancelling order');
+    return this.rateLimitedCall(() => this.alpaca.cancelOrder(alpacaOrderId));
+  }
+
+  async closePosition(symbol: string): Promise<unknown> {
+    this.logger.info({ symbol }, 'Closing position');
+    return this.rateLimitedCall(() => this.alpaca.closePosition({ symbol }));
+  }
+
   // -------------------------------------------------------------------------
   // Assets
   // -------------------------------------------------------------------------

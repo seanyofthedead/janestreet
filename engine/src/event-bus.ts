@@ -87,6 +87,31 @@ export interface ConfigChangeEvent {
   timestamp: number;
 }
 
+export interface OrderCanceledEvent {
+  clientOrderId: string;
+  alpacaOrderId: string;
+  status: string;
+  timestamp: number;
+}
+
+export interface PositionClosedEvent {
+  symbol: string;
+  closedPnl: number;
+  status: string;
+  timestamp: number;
+}
+
+export interface HaltAcknowledgedEvent {
+  timestamp: number;
+  preValidationSkipped?: boolean;
+}
+
+export interface StrategyToggledEvent {
+  strategyName: string;
+  enabled: boolean;
+  timestamp: number;
+}
+
 // ---------------------------------------------------------------------------
 // Event map
 // ---------------------------------------------------------------------------
@@ -96,12 +121,16 @@ export interface EngineEvents {
   signal: [SignalEvent];
   'order-submitted': [OrderSubmittedEvent];
   'order-filled': [OrderFilledEvent];
+  'order-canceled': [OrderCanceledEvent];
   'risk-alert': [RiskAlertEvent];
   'circuit-breaker': [CircuitBreakerEvent];
   'state-transition': [StateTransitionEvent];
   'warmup-complete': [WarmupCompleteEvent];
+  'position-closed': [PositionClosedEvent];
   heartbeat: [HeartbeatEvent];
   'config-change': [ConfigChangeEvent];
+  'halt-acknowledged': [HaltAcknowledgedEvent];
+  'strategy-toggled': [StrategyToggledEvent];
 }
 
 export type EngineEventName = keyof EngineEvents;
