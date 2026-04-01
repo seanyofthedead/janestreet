@@ -230,6 +230,42 @@ export class Orchestrator {
     };
   }
 
+  /**
+   * Handle an external kill notification (e.g. from watchdog via POST /api/notify-kill).
+   * Stops the tick loop, transitions to Halted, and emits circuit-breaker event.
+   */
+  async notifyExternalKill(
+    reason: string,
+    killErrors?: string[],
+  ): Promise<{ acknowledged: boolean; engineState: string }> {
+    // Stop the tick loop
+    if (this.tickTimer) {
+      clearInterval(this.tickTimer);
+      this.tickTimer = null;
+    }
+    this.running = false;
+
+    // Emit circuit-breaker event
+    this.bus.emit('circuit-breaker', {
+      previousState: this.state.engineStateName,
+      newState: 'Halted',
+      reason,
+      killErrors,
+      timestamp: Date.now(),
+    });
+
+    // Transition to Halted via OCaml state machine (same pattern as handleKillSwitch)
+    const result = EngineState.apply_transition(this.state.engineState, {
+      TAG: 1, // Kill_triggered
+      _0: reason,
+    });
+    if (result.TAG === 0) {
+      this.transitionTo(result._0, EngineState.to_string(result._0));
+    }
+
+    return { acknowledged: true, engineState: this.state.engineStateName };
+  }
+
   /** Notify that watchdog is alive (called from health endpoint or external signal) */
   notifyWatchdogAlive(): void {
     this.watchdogAlive = true;
@@ -541,6 +577,9 @@ export class Orchestrator {
     for (const [symbol, quote] of this.latestQuotes) {
       this.state.updatePosition(symbol, quote.price);
     }
+
+    // Keep daily P&L current
+    this.state.updateDailyPnl();
 
     // Determine phase and regime
     const phase = Types.phase_of_equity(this.state.equity) as Phase;

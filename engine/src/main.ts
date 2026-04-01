@@ -16,7 +16,7 @@ import { ConflictResolver } from './conflict-resolver.js';
 import { ConfigPoller } from './config-poller.js';
 import { Orchestrator } from './orchestrator.js';
 import { PerformanceTracker } from './performance-tracker.js';
-import { requireAuth, sendJson, sendError } from './http-utils.js';
+import { requireAuth, sendJson, sendError, parseJsonBody } from './http-utils.js';
 import { SimulationController, getPreviousTradingDay } from './simulation/controller.js';
 import { MockOrderManager } from './simulation/mock-order-manager.js';
 
@@ -76,6 +76,11 @@ function createHttpServer(
         return;
       }
 
+      if (method === 'POST' && path === '/api/notify-kill') {
+        handleNotifyKill(req, res, config, orchestrator);
+        return;
+      }
+
       if (method === 'POST' && path.startsWith('/api/strategies/') && path.split('/').length === 5) {
         handleStrategyToggle(req, res, config, orchestrator);
         return;
@@ -130,6 +135,7 @@ function handleHealth(res: ServerResponse, orchestrator: Orchestrator): void {
       tickCount: state.tickCount,
       lastHeartbeat: state.lastHeartbeat,
       equity: state.equity,
+      dailyPnl: state.dailyPnl,
       positions: state.getAllPositions().length,
       activeOrders: state.getAllActiveOrders().length,
       timestamp: Date.now(),
@@ -181,7 +187,13 @@ function handleSSE(
     listeners.push({ event: eventName, fn: fn as any });
   }
 
+  // SSE keepalive to prevent proxy/browser timeouts
+  const keepalive = setInterval(() => {
+    try { res.write(':keepalive\n\n'); } catch { /* disconnected */ }
+  }, 15_000);
+
   req.on('close', () => {
+    clearInterval(keepalive);
     for (const { event, fn } of listeners) {
       orchestrator.bus.off(event, fn as any);
     }
@@ -317,6 +329,31 @@ async function handleAcknowledgeHalt(
       logger.error({ err: message }, 'Failed to acknowledge halt');
       sendError(res, 500, message);
     }
+  }
+}
+
+async function handleNotifyKill(
+  req: IncomingMessage,
+  res: ServerResponse,
+  config: EngineConfig,
+  orchestrator: Orchestrator,
+): Promise<void> {
+  if (!requireAuth(req, config.localApiSecret)) {
+    sendError(res, 401, 'Unauthorized');
+    return;
+  }
+
+  try {
+    const body = await parseJsonBody<{ reason?: string; errors?: string[] }>(req, { optional: true });
+    const reason = body?.reason ?? 'External kill notification';
+    const errors = body?.errors;
+
+    const result = await orchestrator.notifyExternalKill(reason, errors);
+    sendJson(res, 200, result);
+  } catch (err) {
+    const message = (err as Error).message;
+    logger.error({ err: message }, 'Failed to process notify-kill');
+    sendError(res, 500, message);
   }
 }
 
@@ -481,6 +518,7 @@ async function main(): Promise<void> {
     logger.info(`  DELETE /api/orders/:id    — cancel order (auth)`);
     logger.info(`  POST /api/positions/:sym/close — close position (auth)`);
     logger.info(`  POST /api/acknowledge-halt     — ack halt (auth)`);
+    logger.info(`  POST /api/notify-kill          — external kill (auth)`);
     logger.info(`  POST /api/strategies/:id/enable|disable (auth)`);
   });
 

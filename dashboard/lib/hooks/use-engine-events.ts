@@ -10,7 +10,31 @@ type EngineEventType =
   | 'order-filled'
   | 'risk-alert'
   | 'circuit-breaker'
-  | 'state-transition';
+  | 'state-transition'
+  | 'warmup-complete'
+  | 'heartbeat'
+  | 'config-change'
+  | 'order-canceled'
+  | 'position-closed'
+  | 'halt-acknowledged'
+  | 'strategy-toggled';
+
+const ALL_EVENT_TYPES: EngineEventType[] = [
+  'tick',
+  'signal',
+  'order-submitted',
+  'order-filled',
+  'risk-alert',
+  'circuit-breaker',
+  'state-transition',
+  'warmup-complete',
+  'heartbeat',
+  'config-change',
+  'order-canceled',
+  'position-closed',
+  'halt-acknowledged',
+  'strategy-toggled',
+];
 
 interface EngineEvent {
   type: EngineEventType;
@@ -54,6 +78,25 @@ export function useEngineEvents() {
           queryClient.invalidateQueries({ queryKey: ['account'] });
           queryClient.invalidateQueries({ queryKey: ['strategies'] });
           break;
+        case 'order-canceled':
+        case 'position-closed':
+          queryClient.invalidateQueries({ queryKey: ['orders'] });
+          queryClient.invalidateQueries({ queryKey: ['positions'] });
+          break;
+        case 'halt-acknowledged':
+          queryClient.invalidateQueries({ queryKey: ['account'] });
+          break;
+        case 'strategy-toggled':
+        case 'config-change':
+          queryClient.invalidateQueries({ queryKey: ['strategies'] });
+          break;
+        case 'warmup-complete':
+          queryClient.invalidateQueries({ queryKey: ['account'] });
+          queryClient.invalidateQueries({ queryKey: ['strategies'] });
+          break;
+        case 'heartbeat':
+          // SSE keepalive, no action needed
+          break;
       }
     },
     [queryClient]
@@ -89,14 +132,29 @@ export function useEngineEvents() {
       stopPolling();
     };
 
+    // Handle unnamed events (e.g. initial "connected" message from engine)
     es.onmessage = (msg) => {
       try {
-        const event: EngineEvent = JSON.parse(msg.data);
-        handleEvent(event);
+        const data = JSON.parse(msg.data);
+        if (data.type === 'connected') {
+          // Connection confirmed, no query action needed
+        }
       } catch {
         // ignore malformed messages
       }
     };
+
+    // Listen for each named event type the engine sends
+    for (const eventType of ALL_EVENT_TYPES) {
+      es.addEventListener(eventType, (msg) => {
+        try {
+          const data = JSON.parse(msg.data);
+          handleEvent({ type: eventType, data, timestamp: new Date().toISOString() });
+        } catch {
+          // ignore malformed messages
+        }
+      });
+    }
 
     es.onerror = () => {
       es.close();

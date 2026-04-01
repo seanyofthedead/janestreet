@@ -69,6 +69,7 @@ export interface WatchdogStatus {
   lastCheckTime: string;
   dailyPnl: number | null;
   orderRate: number | null;
+  enginePhase: string | null;
 }
 
 export interface Quote {

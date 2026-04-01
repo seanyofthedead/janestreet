@@ -16,6 +16,7 @@ export interface HealthCheckResult {
   lastCheckTime: string;
   dailyPnl: number | null;
   orderRate: number | null;
+  enginePhase: string | null;
 }
 
 interface EngineHealthResponse {
@@ -23,6 +24,7 @@ interface EngineHealthResponse {
   timestamp: string;
   dailyPnl?: number;
   orderRate?: number;
+  engineState?: string;
 }
 
 export class HealthChecker extends EventEmitter {
@@ -35,8 +37,9 @@ export class HealthChecker extends EventEmitter {
   private lastCheckTime: string = new Date().toISOString();
   private dailyPnl: number | null = null;
   private orderRate: number | null = null;
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private baselineOrderRate: number | null = null;
+  private enginePhase: string | null = null;
 
   constructor(config: WatchdogConfig, killSwitch: KillSwitch, logger?: pino.Logger) {
     super();
@@ -51,9 +54,15 @@ export class HealthChecker extends EventEmitter {
       { intervalMs: this.config.healthCheckIntervalMs },
       'Starting health check polling',
     );
-    this.pollTimer = setInterval(() => {
-      void this.check();
-    }, this.config.healthCheckIntervalMs);
+
+    // Use setTimeout chain instead of setInterval to prevent overlapping checks
+    const scheduleNext = () => {
+      this.pollTimer = setTimeout(async () => {
+        await this.check();
+        if (this.pollTimer !== null) scheduleNext(); // only continue if not stopped
+      }, this.config.healthCheckIntervalMs);
+    };
+    scheduleNext();
 
     // Run first check immediately
     void this.check();
@@ -62,7 +71,7 @@ export class HealthChecker extends EventEmitter {
   /** Stop the health check polling loop */
   stop(): void {
     if (this.pollTimer) {
-      clearInterval(this.pollTimer);
+      clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
     this.logger.info('Health check polling stopped');
@@ -76,6 +85,7 @@ export class HealthChecker extends EventEmitter {
       lastCheckTime: this.lastCheckTime,
       dailyPnl: this.dailyPnl,
       orderRate: this.orderRate,
+      enginePhase: this.enginePhase,
     };
   }
 
@@ -98,6 +108,9 @@ export class HealthChecker extends EventEmitter {
           this.baselineOrderRate = response.orderRate;
         }
       }
+
+      // Track engine phase/state
+      this.enginePhase = response.engineState ?? null;
 
       // Check daily loss threshold
       if (this.dailyPnl !== null && this.dailyPnl < -this.config.dailyLossThreshold) {

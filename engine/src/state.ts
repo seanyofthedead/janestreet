@@ -79,6 +79,7 @@ export class State {
   cash: number = 0;
   buyingPower: number = 0;
   dailyPnl: number = 0;
+  startOfDayEquity: number = 0;
   peakEquity: number = 0;
   lastHeartbeat: number = Date.now();
 
@@ -122,6 +123,11 @@ export class State {
       this.buyingPower = account.buying_power;
       this.dayTradeCount = account.daytrade_count;
 
+      // Set start-of-day equity on first reconciliation
+      if (this.startOfDayEquity === 0) {
+        this.startOfDayEquity = account.equity;
+      }
+
       if (this.equity > this.peakEquity) {
         this.peakEquity = this.equity;
       }
@@ -151,6 +157,17 @@ export class State {
     } catch (err) {
       this.logger.error({ err: (err as Error).message }, 'Reconciliation failed');
       throw err;
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Daily P&L
+  // -----------------------------------------------------------------------
+
+  /** Recompute dailyPnl from current equity vs start-of-day equity */
+  updateDailyPnl(): void {
+    if (this.startOfDayEquity > 0) {
+      this.dailyPnl = this.equity - this.startOfDayEquity;
     }
   }
 

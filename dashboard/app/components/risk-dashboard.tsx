@@ -18,6 +18,25 @@ function StatusIndicator({ status }: { status: string }) {
   );
 }
 
+function EnginePhaseIndicator({ phase }: { phase: string | null }) {
+  const phaseColors: Record<string, string> = {
+    Trading: 'bg-green-500',
+    Off_hours: 'bg-gray-500',
+    Halted: 'bg-red-500 animate-pulse',
+    Cooldown: 'bg-yellow-500',
+    Warming_up: 'bg-blue-500',
+    Starting: 'bg-blue-500',
+  };
+  const label = phase ? phase.replace(/_/g, ' ') : 'Unknown';
+  const color = phase ? (phaseColors[phase] ?? 'bg-gray-500') : 'bg-gray-500';
+  return (
+    <div className="flex items-center gap-2">
+      <div className={`w-3 h-3 rounded-full ${color}`} />
+      <span className="text-xs text-gray-300">{label}</span>
+    </div>
+  );
+}
+
 export function RiskDashboard() {
   const { data: status, isLoading: wdLoading, error: wdError } = useWatchdogStatus();
   const { data: account } = useAccount();
@@ -64,6 +83,12 @@ export function RiskDashboard() {
         <div className="flex items-center justify-between">
           <span className="text-xs text-gray-400">Watchdog</span>
           <StatusIndicator status={status.status} />
+        </div>
+
+        {/* Engine Phase */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-gray-400">Engine Phase</span>
+          <EnginePhaseIndicator phase={status.enginePhase ?? null} />
         </div>
 
         {/* Last Check */}
