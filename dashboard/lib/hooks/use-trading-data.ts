@@ -8,12 +8,14 @@ import {
   fetchStrategies,
   fetchWatchdogStatus,
   fetchBars,
+  fetchSignals,
   type Account,
   type Position,
   type Order,
   type StrategyMetrics,
   type WatchdogStatus,
   type CandleData,
+  type SignalRecord,
 } from '@/lib/api';
 
 export function useAccount() {
@@ -67,5 +69,17 @@ export function useBars(symbol: string, timeframe = '5Min') {
     queryFn: () => fetchBars(symbol, timeframe),
     staleTime: 30000,
     refetchInterval: 60000,
+  });
+}
+
+export function useSignals(
+  symbol: string,
+  options?: { since?: number; until?: number; strategy?: string },
+) {
+  return useQuery<SignalRecord[]>({
+    queryKey: ['signals', symbol, options?.since, options?.strategy],
+    queryFn: () => fetchSignals(symbol, options),
+    staleTime: 10000,
+    refetchInterval: 30000,
   });
 }

@@ -16,6 +16,7 @@ import { ConflictResolver } from './conflict-resolver.js';
 import { ConfigPoller } from './config-poller.js';
 import { Orchestrator } from './orchestrator.js';
 import { PerformanceTracker } from './performance-tracker.js';
+import { SignalStore } from './signal-store.js';
 import { requireAuth, sendJson, sendError, parseJsonBody } from './http-utils.js';
 import { SimulationController, getPreviousTradingDay } from './simulation/controller.js';
 import { MockOrderManager } from './simulation/mock-order-manager.js';
@@ -86,6 +87,11 @@ function createHttpServer(
         return;
       }
 
+      if (method === 'PATCH' && path === '/api/config') {
+        handleConfigUpdate(req, res, config, orchestrator);
+        return;
+      }
+
       // --- Exact-match GET routes ---
 
       switch (path) {
@@ -109,6 +115,9 @@ function createHttpServer(
           break;
         case '/api/bars':
           handleBars(req, res, url, orchestrator);
+          break;
+        case '/api/signals':
+          handleSignals(req, res, url, orchestrator);
           break;
         default:
           res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -398,6 +407,41 @@ async function handleStrategyToggle(
 }
 
 // ---------------------------------------------------------------------------
+// Config Update Handler
+// ---------------------------------------------------------------------------
+
+async function handleConfigUpdate(
+  req: IncomingMessage,
+  res: ServerResponse,
+  config: EngineConfig,
+  orchestrator: Orchestrator,
+): Promise<void> {
+  if (!requireAuth(req, config.localApiSecret)) {
+    sendError(res, 401, 'Unauthorized');
+    return;
+  }
+
+  try {
+    const body = await parseJsonBody<Record<string, unknown>>(req);
+    if (!body || Object.keys(body).length === 0) {
+      sendError(res, 400, 'Request body must contain at least one field to update');
+      return;
+    }
+
+    const result = await orchestrator.updateConfig(body as any);
+    sendJson(res, 200, result);
+  } catch (err) {
+    const message = (err as Error).message;
+    if (message.includes('Non-updatable fields') || message.includes('Invalid value') || message.includes('No fields')) {
+      sendError(res, 400, message);
+    } else {
+      logger.error({ err: message }, 'Failed to update config');
+      sendError(res, 500, message);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Read-only API Handlers
 // ---------------------------------------------------------------------------
 
@@ -434,6 +478,34 @@ function handleBars(
     });
 }
 
+function handleSignals(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+  orchestrator: Orchestrator,
+): void {
+  const symbol = url.searchParams.get('symbol');
+  if (!symbol) {
+    sendError(res, 400, 'Missing required query parameter: symbol');
+    return;
+  }
+
+  const since = Number(url.searchParams.get('since') ?? Date.now() - 24 * 60 * 60 * 1000);
+  const untilParam = url.searchParams.get('until');
+  const until = untilParam ? Number(untilParam) : undefined;
+  const strategy = url.searchParams.get('strategy') ?? undefined;
+
+  orchestrator.signalStore
+    .query(symbol, since, until, strategy)
+    .then((signals) => {
+      sendJson(res, 200, signals);
+    })
+    .catch((err) => {
+      logger.error({ err: (err as Error).message, symbol }, 'Failed to query signals');
+      sendError(res, 500, 'Failed to query signals');
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -454,6 +526,7 @@ async function main(): Promise<void> {
   const conflictResolver = new ConflictResolver(logger);
   const configPoller = new ConfigPoller(config, bus, logger);
   const performanceTracker = new PerformanceTracker();
+  const signalStore = new SignalStore(logger);
 
   // Prevent unhandled 'error' events from crashing the process
   marketDataStream.on('error' as any, (err: Error) => {
@@ -502,6 +575,7 @@ async function main(): Promise<void> {
     conflictResolver,
     configPoller,
     performanceTracker,
+    signalStore,
     logger,
   );
 
@@ -520,6 +594,8 @@ async function main(): Promise<void> {
     logger.info(`  POST /api/acknowledge-halt     — ack halt (auth)`);
     logger.info(`  POST /api/notify-kill          — external kill (auth)`);
     logger.info(`  POST /api/strategies/:id/enable|disable (auth)`);
+    logger.info(`  PATCH /api/config              — update risk thresholds (auth)`);
+    logger.info(`  GET /api/signals?symbol=SPY    — query signal history`);
   });
 
   // Start orchestrator

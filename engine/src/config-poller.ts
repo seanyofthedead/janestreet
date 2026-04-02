@@ -9,6 +9,7 @@ import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import type { EventBus } from './event-bus.js';
 import type { EngineConfig } from './config.js';
 import { getDynamoClient, TABLE_CONFIG } from './dynamodb.js';
+import { STRATEGY_NAMES } from './strategies/index.js';
 
 // ---------------------------------------------------------------------------
 // Runtime config shape
@@ -68,16 +69,8 @@ function defaultRuntimeConfig(): RuntimeConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Strategy name constants
+// Strategy name lookup (derived from canonical STRATEGY_NAMES)
 // ---------------------------------------------------------------------------
-
-const STRATEGY_NAMES: Record<number, string> = {
-  0: 'Mean_reversion',
-  1: 'Sector_rotation',
-  2: 'Calendar_seasonal',
-  3: 'Momentum',
-  4: 'Market_making',
-};
 
 /** Reverse lookup: lowercase name -> canonical name */
 const STRATEGY_NAME_LOOKUP: Record<string, string> = Object.fromEntries(
@@ -230,6 +223,89 @@ export class ConfigPoller {
     }
 
     this.logger.info({ strategy: canonicalName, enabled }, 'Strategy enabled/disabled');
+  }
+
+  /** Whitelist of risk threshold fields that can be updated via API */
+  private static readonly UPDATABLE_RISK_FIELDS = new Set([
+    'maxPositionPct',
+    'maxSectorPct',
+    'minCashReservePct',
+    'maxDailyLossPct',
+    'maxDrawdownReducePct',
+    'maxDrawdownFlattenPct',
+    'maxOrderRatePerMin',
+    'heartbeatTimeoutSeconds',
+    'maxPositionsByPhase',
+  ]);
+
+  /**
+   * Update risk threshold fields and persist to DynamoDB.
+   * Only numeric risk fields are accepted — strategy toggles, symbols, and
+   * acknowledgment have dedicated methods.
+   */
+  async updateRiskThresholds(
+    updates: Partial<RuntimeConfig>,
+  ): Promise<RuntimeConfig> {
+    // Validate: only whitelisted fields
+    const invalidFields = Object.keys(updates).filter(
+      (k) => !ConfigPoller.UPDATABLE_RISK_FIELDS.has(k),
+    );
+    if (invalidFields.length > 0) {
+      throw new Error(`Non-updatable fields: ${invalidFields.join(', ')}`);
+    }
+
+    // Validate: all values must be positive numbers
+    for (const [key, value] of Object.entries(updates)) {
+      if (typeof value !== 'number' || value < 0) {
+        throw new Error(`Invalid value for ${key}: must be a non-negative number`);
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      throw new Error('No fields to update');
+    }
+
+    const client = getDynamoClient();
+
+    // Read current config from DynamoDB
+    const result = await client.send(
+      new GetCommand({
+        TableName: TABLE_CONFIG,
+        Key: { key: 'RUNTIME_CONFIG' },
+      }),
+    );
+
+    const item = result.Item ?? { key: 'RUNTIME_CONFIG' };
+
+    // Merge updates
+    for (const [key, value] of Object.entries(updates)) {
+      item[key] = value;
+    }
+    item.lastUpdated = Date.now();
+
+    // Write back
+    await client.send(
+      new PutCommand({
+        TableName: TABLE_CONFIG,
+        Item: item,
+      }),
+    );
+
+    // Refresh in-memory config
+    try {
+      await this.forcePoll();
+    } catch (err) {
+      this.logger.warn(
+        { err: (err as Error).message, fields: Object.keys(updates) },
+        'forcePoll failed after updateRiskThresholds, falling back to direct mutation',
+      );
+      for (const [key, value] of Object.entries(updates)) {
+        (this.current as Record<string, unknown>)[key] = value;
+      }
+    }
+
+    this.logger.info({ fields: Object.keys(updates) }, 'Risk thresholds updated');
+    return this.current;
   }
 
   /**

@@ -34,7 +34,7 @@ export function PnlChart({ data = [], startingBalance = 1000 }: PnlChartProps) {
       <h2 className="text-sm font-medium text-gray-400 mb-4">Equity Curve</h2>
       {chartData.length === 0 ? (
         <div className="flex items-center justify-center h-[250px] text-gray-600 text-sm">
-          No equity data available
+          PnL history will appear after the first completed trade
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={250}>

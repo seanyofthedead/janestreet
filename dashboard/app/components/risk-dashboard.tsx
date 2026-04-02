@@ -2,6 +2,8 @@
 
 import { useWatchdogStatus } from '@/lib/hooks/use-trading-data';
 import { useAccount } from '@/lib/hooks/use-trading-data';
+import { Tooltip } from '@/app/components/ui/tooltip';
+import { RISK_HINTS } from '@/lib/constants';
 
 function StatusIndicator({ status }: { status: string }) {
   const colors: Record<string, string> = {
@@ -81,19 +83,19 @@ export function RiskDashboard() {
       <div className="space-y-4">
         {/* Watchdog Status */}
         <div className="flex items-center justify-between">
-          <span className="text-xs text-gray-400">Watchdog</span>
+          <Tooltip hint={RISK_HINTS.Watchdog}><span className="text-xs text-gray-400">Watchdog</span></Tooltip>
           <StatusIndicator status={status.status} />
         </div>
 
         {/* Engine Phase */}
         <div className="flex items-center justify-between">
-          <span className="text-xs text-gray-400">Engine Phase</span>
+          <Tooltip hint={RISK_HINTS['Engine Phase']}><span className="text-xs text-gray-400">Engine Phase</span></Tooltip>
           <EnginePhaseIndicator phase={status.enginePhase ?? null} />
         </div>
 
         {/* Last Check */}
         <div className="flex items-center justify-between">
-          <span className="text-xs text-gray-400">Last Check</span>
+          <Tooltip hint={RISK_HINTS['Last Check']}><span className="text-xs text-gray-400">Last Check</span></Tooltip>
           <span className="text-xs text-gray-300 font-mono">
             {new Date(status.lastCheckTime).toLocaleTimeString()}
           </span>
@@ -101,7 +103,7 @@ export function RiskDashboard() {
 
         {/* Missed Heartbeats */}
         <div className="flex items-center justify-between">
-          <span className="text-xs text-gray-400">Missed Heartbeats</span>
+          <Tooltip hint={RISK_HINTS['Missed Heartbeats']}><span className="text-xs text-gray-400">Missed Heartbeats</span></Tooltip>
           <span className={`text-sm font-semibold ${status.consecutiveMisses > 0 ? 'text-yellow-400' : 'text-green-400'}`}>
             {status.consecutiveMisses}
           </span>
@@ -111,7 +113,7 @@ export function RiskDashboard() {
 
         {/* Daily P&L */}
         <div className="flex items-center justify-between">
-          <span className="text-xs text-gray-400">Daily P&L</span>
+          <Tooltip hint={RISK_HINTS['Daily P&L']}><span className="text-xs text-gray-400">Daily P&L</span></Tooltip>
           <span className={`text-sm font-semibold font-mono ${dailyPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
             {dailyPnl >= 0 ? '+' : ''}${dailyPnl.toFixed(2)}
           </span>
@@ -119,7 +121,7 @@ export function RiskDashboard() {
 
         {/* Equity */}
         <div className="flex items-center justify-between">
-          <span className="text-xs text-gray-400">Equity</span>
+          <Tooltip hint={RISK_HINTS.Equity}><span className="text-xs text-gray-400">Equity</span></Tooltip>
           <span className="text-sm font-semibold text-white font-mono">
             ${equity.toFixed(2)}
           </span>
@@ -128,7 +130,7 @@ export function RiskDashboard() {
         {/* Order Rate */}
         {status.orderRate !== null && (
           <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-400">Order Rate</span>
+            <Tooltip hint={RISK_HINTS['Order Rate']}><span className="text-xs text-gray-400">Order Rate</span></Tooltip>
             <span className="text-sm font-semibold text-white font-mono">
               {status.orderRate.toFixed(1)}/min
             </span>

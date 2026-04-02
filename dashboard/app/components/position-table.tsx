@@ -1,6 +1,7 @@
 'use client';
 
 import { usePositions } from '@/lib/hooks/use-trading-data';
+import { Tooltip } from '@/app/components/ui/tooltip';
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat('en-US', {
@@ -44,18 +45,18 @@ export function PositionTable() {
         <span className="ml-2 text-gray-600">({positions.length})</span>
       </h2>
       {positions.length === 0 ? (
-        <p className="text-gray-500 text-sm">No open positions</p>
+        <p className="text-gray-500 text-sm">No open positions. Strategies will open positions when market opportunities are identified.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-gray-500 text-xs uppercase tracking-wide border-b border-gray-800">
-                <th className="text-left pb-2 pr-4">Symbol</th>
-                <th className="text-right pb-2 pr-4">Qty</th>
-                <th className="text-right pb-2 pr-4">Avg Entry</th>
-                <th className="text-right pb-2 pr-4">Current</th>
-                <th className="text-right pb-2 pr-4">Unrealized PnL</th>
-                <th className="text-right pb-2">% Portfolio</th>
+                <th className="text-left pb-2 pr-4"><Tooltip hint="Ticker symbol of the held security">Symbol</Tooltip></th>
+                <th className="text-right pb-2 pr-4"><Tooltip hint="Number of shares held">Qty</Tooltip></th>
+                <th className="text-right pb-2 pr-4"><Tooltip hint="Average price paid per share">Avg Entry</Tooltip></th>
+                <th className="text-right pb-2 pr-4"><Tooltip hint="Latest market price per share">Current</Tooltip></th>
+                <th className="text-right pb-2 pr-4"><Tooltip hint="Unrealized profit/loss on this position">Unrealized PnL</Tooltip></th>
+                <th className="text-right pb-2"><Tooltip hint="Position value as percentage of total portfolio">% Portfolio</Tooltip></th>
               </tr>
             </thead>
             <tbody>

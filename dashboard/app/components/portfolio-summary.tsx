@@ -1,6 +1,8 @@
 'use client';
 
 import { useAccount } from '@/lib/hooks/use-trading-data';
+import { Tooltip } from '@/app/components/ui/tooltip';
+import { PORTFOLIO_HINTS } from '@/lib/constants';
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat('en-US', {
@@ -60,7 +62,9 @@ export function PortfolioSummary() {
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         {cards.map((card) => (
           <div key={card.label} className="space-y-1">
-            <p className="text-xs text-gray-500 uppercase tracking-wide">{card.label}</p>
+            <Tooltip hint={PORTFOLIO_HINTS[card.label] ?? card.label}>
+              <p className="text-xs text-gray-500 uppercase tracking-wide">{card.label}</p>
+            </Tooltip>
             <p className="text-lg font-semibold">{card.value}</p>
           </div>
         ))}

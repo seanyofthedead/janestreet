@@ -10,6 +10,7 @@ import { RiskDashboard } from './components/risk-dashboard';
 import { PriceChart } from './components/price-chart';
 import { KillSwitchButton } from './components/kill-switch-button';
 import { PnlChart } from './components/pnl-chart';
+import { HelpButton } from './components/help-modal';
 
 function EngineStatusBanner() {
   const { data: account, isLoading, error } = useAccount();
@@ -53,7 +54,10 @@ export default function Home() {
           <h1 className="text-2xl font-bold text-white">Trading Dashboard</h1>
           <p className="text-sm text-gray-500">Jane Street Autonomous Trading Agent</p>
         </div>
-        <EngineStatusBanner />
+        <div className="flex items-center gap-3">
+          <EngineStatusBanner />
+          <HelpButton />
+        </div>
       </div>
 
       {/* Top row: Portfolio + Risk + Kill Switch */}

@@ -10,6 +10,7 @@ import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 export const TABLE_STATE = 'trading-state';
 export const TABLE_CONFIG = 'trading-config';
 export const TABLE_HISTORY = 'trading-history';
+export const TABLE_SIGNALS = 'trading-signals';
 
 let _client: DynamoDBDocumentClient | null = null;
 

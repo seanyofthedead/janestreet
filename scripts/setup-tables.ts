@@ -52,6 +52,18 @@ const tables: CreateTableCommandInput[] = [
     ],
     BillingMode: 'PAY_PER_REQUEST',
   },
+  {
+    TableName: 'trading-signals',
+    KeySchema: [
+      { AttributeName: 'symbol', KeyType: 'HASH' },
+      { AttributeName: 'timestamp', KeyType: 'RANGE' },
+    ],
+    AttributeDefinitions: [
+      { AttributeName: 'symbol', AttributeType: 'S' },
+      { AttributeName: 'timestamp', AttributeType: 'N' },
+    ],
+    BillingMode: 'PAY_PER_REQUEST',
+  },
 ];
 
 async function main(): Promise<void> {

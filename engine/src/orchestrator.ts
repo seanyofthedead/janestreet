@@ -21,6 +21,7 @@ import { StrategyRunner, STRATEGY_NAMES, type SymbolMarketData, type Phase, type
 import { ConflictResolver } from './conflict-resolver.js';
 import { ConfigPoller } from './config-poller.js';
 import { PerformanceTracker } from './performance-tracker.js';
+import { SignalStore } from './signal-store.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -84,6 +85,7 @@ export class Orchestrator {
   readonly conflictResolver: ConflictResolver;
   readonly configPoller: ConfigPoller;
   private readonly performanceTracker: PerformanceTracker;
+  readonly signalStore: SignalStore;
 
   /** Market data buffer: latest bars per symbol */
   private barBuffer: Map<string, Array<{ o: number; h: number; l: number; c: number; v: number }>> = new Map();
@@ -118,6 +120,7 @@ export class Orchestrator {
     conflictResolver: ConflictResolver,
     configPoller: ConfigPoller,
     performanceTracker: PerformanceTracker,
+    signalStore: SignalStore,
     logger?: pino.Logger,
   ) {
     this.config = config;
@@ -130,6 +133,7 @@ export class Orchestrator {
     this.conflictResolver = conflictResolver;
     this.configPoller = configPoller;
     this.performanceTracker = performanceTracker;
+    this.signalStore = signalStore;
     this.logger = (logger ?? pino({ name: 'orchestrator' })).child({ component: 'orchestrator' });
   }
 
@@ -386,6 +390,16 @@ export class Orchestrator {
     };
   }
 
+  /**
+   * Update risk threshold config fields via the ConfigPoller.
+   * Returns the updated config snapshot.
+   */
+  async updateConfig(
+    updates: Partial<import('./config-poller.js').RuntimeConfig>,
+  ): Promise<import('./config-poller.js').RuntimeConfig> {
+    return this.configPoller.updateRiskThresholds(updates);
+  }
+
   // -----------------------------------------------------------------------
   // State machine
   // -----------------------------------------------------------------------
@@ -610,16 +624,19 @@ export class Orchestrator {
 
     if (signals.length === 0) return;
 
-    // 2. Emit signal events
+    // 2. Emit signal events and persist to DynamoDB
     for (const signal of signals) {
-      this.bus.emit('signal', {
+      const signalEvent = {
         strategy: STRATEGY_NAMES[signal.strategy] ?? 'unknown',
         symbol: signal.symbol,
         side: signal.side === 0 ? 'buy' : 'sell',
         confidence: SignalMod.confidence(signal),
         targetPrice: signal.target_price,
         timestamp: signal.timestamp,
-      });
+      };
+      this.bus.emit('signal', signalEvent);
+      // Fire-and-forget persistence — errors logged inside SignalStore
+      this.signalStore.persist(signalEvent);
     }
 
     // 3. Resolve conflicts

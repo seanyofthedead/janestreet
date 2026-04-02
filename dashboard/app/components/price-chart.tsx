@@ -95,7 +95,7 @@ export function PriceChart({ symbol }: PriceChartProps) {
       )}
       {!isLoading && (!candles || candles.length === 0) && (
         <div className="flex items-center justify-center h-[300px] text-gray-600 text-sm">
-          No chart data available
+          Price chart will appear once market data is available
         </div>
       )}
     </div>

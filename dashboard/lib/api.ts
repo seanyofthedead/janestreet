@@ -132,3 +132,25 @@ export function fetchBars(symbol: string, timeframe = '5Min'): Promise<CandleDat
     `${ENGINE_URL}/api/bars?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`
   );
 }
+
+// ---- Signals ----
+
+export interface SignalRecord {
+  symbol: string;
+  timestamp: number;
+  strategy: string;
+  side: string;
+  confidence: number;
+  targetPrice: number;
+}
+
+export function fetchSignals(
+  symbol: string,
+  options?: { since?: number; until?: number; strategy?: string },
+): Promise<SignalRecord[]> {
+  const params = new URLSearchParams({ symbol });
+  if (options?.since) params.set('since', String(options.since));
+  if (options?.until) params.set('until', String(options.until));
+  if (options?.strategy) params.set('strategy', options.strategy);
+  return fetchJson<SignalRecord[]>(`${ENGINE_URL}/api/signals?${params}`);
+}

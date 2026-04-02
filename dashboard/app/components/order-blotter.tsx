@@ -1,6 +1,7 @@
 'use client';
 
 import { useOrders } from '@/lib/hooks/use-trading-data';
+import { Tooltip } from '@/app/components/ui/tooltip';
 
 const STATUS_STYLES: Record<string, string> = {
   pending: 'bg-yellow-900/50 text-yellow-300 border-yellow-700',
@@ -65,19 +66,19 @@ export function OrderBlotter() {
         <span className="ml-2 text-gray-600">({orders.length})</span>
       </h2>
       {orders.length === 0 ? (
-        <p className="text-gray-500 text-sm">No orders</p>
+        <p className="text-gray-500 text-sm">No active orders. Orders appear here when strategies submit trades.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-gray-500 text-xs uppercase tracking-wide border-b border-gray-800">
-                <th className="text-left pb-2 pr-3">Time</th>
-                <th className="text-left pb-2 pr-3">Symbol</th>
-                <th className="text-left pb-2 pr-3">Side</th>
-                <th className="text-right pb-2 pr-3">Qty</th>
-                <th className="text-right pb-2 pr-3">Price</th>
-                <th className="text-center pb-2 pr-3">Status</th>
-                <th className="text-left pb-2">Strategy</th>
+                <th className="text-left pb-2 pr-3"><Tooltip hint="Time the order was submitted">Time</Tooltip></th>
+                <th className="text-left pb-2 pr-3"><Tooltip hint="Ticker symbol">Symbol</Tooltip></th>
+                <th className="text-left pb-2 pr-3"><Tooltip hint="Buy or Sell direction">Side</Tooltip></th>
+                <th className="text-right pb-2 pr-3"><Tooltip hint="Number of shares ordered">Qty</Tooltip></th>
+                <th className="text-right pb-2 pr-3"><Tooltip hint="Fill price or limit price">Price</Tooltip></th>
+                <th className="text-center pb-2 pr-3"><Tooltip hint="Order status: pending, filled, cancelled, or rejected">Status</Tooltip></th>
+                <th className="text-left pb-2"><Tooltip hint="Strategy that generated this order">Strategy</Tooltip></th>
               </tr>
             </thead>
             <tbody>

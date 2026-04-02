@@ -2,13 +2,16 @@
 
 import { useStrategies } from '@/lib/hooks/use-trading-data';
 import type { StrategyMetrics } from '@/lib/api';
+import { Tooltip } from '@/app/components/ui/tooltip';
+import { STRATEGY_HINTS, STRATEGY_PHASES } from '@/lib/constants';
 
 function HealthDot({ healthy }: { healthy: boolean }) {
   return (
-    <span
-      className={`inline-block w-2.5 h-2.5 rounded-full ${healthy ? 'bg-green-400' : 'bg-red-400'}`}
-      title={healthy ? 'Healthy' : 'Unhealthy'}
-    />
+    <Tooltip hint={healthy ? 'Strategy is healthy and generating signals' : 'Strategy marked unhealthy due to consecutive misses'}>
+      <span
+        className={`inline-block w-2.5 h-2.5 rounded-full ${healthy ? 'bg-green-400' : 'bg-red-400'}`}
+      />
+    </Tooltip>
   );
 }
 
@@ -36,25 +39,25 @@ function StrategyCard({ strategy }: { strategy: StrategyMetrics }) {
 
       <div className="grid grid-cols-2 gap-3 text-xs">
         <div>
-          <p className="text-gray-500">Sharpe</p>
+          <Tooltip hint={STRATEGY_HINTS.Sharpe}><p className="text-gray-500">Sharpe</p></Tooltip>
           <p className="font-semibold text-white">{sharpe.toFixed(2)}</p>
         </div>
         <div>
-          <p className="text-gray-500">Win Rate</p>
+          <Tooltip hint={STRATEGY_HINTS['Win Rate']}><p className="text-gray-500">Win Rate</p></Tooltip>
           <p className="font-semibold text-white">{(winRate * 100).toFixed(1)}%</p>
         </div>
         <div>
-          <p className="text-gray-500">Signals</p>
+          <Tooltip hint={STRATEGY_HINTS.Signals}><p className="text-gray-500">Signals</p></Tooltip>
           <p className="font-semibold text-white">{signalCount}</p>
         </div>
         <div>
-          <p className="text-gray-500">PnL</p>
+          <Tooltip hint={STRATEGY_HINTS.PnL}><p className="text-gray-500">PnL</p></Tooltip>
           <p className={`font-semibold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
             {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
           </p>
         </div>
         <div>
-          <p className="text-gray-500">Allocation</p>
+          <Tooltip hint={STRATEGY_HINTS.Allocation}><p className="text-gray-500">Allocation</p></Tooltip>
           <p className="font-semibold text-white">{allocation.toFixed(1)}%</p>
         </div>
       </div>
@@ -93,8 +96,15 @@ export function StrategyPanel() {
         Strategies
         <span className="ml-2 text-gray-600">({strategies.length})</span>
       </h2>
+      <div className="flex gap-4 mb-3 text-xs text-gray-500">
+        {STRATEGY_PHASES.map((phase) => (
+          <Tooltip key={phase.key} hint={phase.description}>
+            <span>{phase.label}</span>
+          </Tooltip>
+        ))}
+      </div>
       {strategies.length === 0 ? (
-        <p className="text-gray-500 text-sm">No strategies registered</p>
+        <p className="text-gray-500 text-sm">Awaiting market data. Signals will appear once strategies complete their warmup period.</p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {strategies.map((s) => (
