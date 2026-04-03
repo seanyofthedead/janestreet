@@ -55,6 +55,13 @@ export interface BacktestConfig {
   commissionPerShare?: number;
   /** Slippage as fraction of price (default 0.0005) */
   slippagePct?: number;
+  /**
+   * Optional regime schedule: array of time periods with assigned regime.
+   * Regime affects max_position_pct scaling on generated signals.
+   * If omitted, defaults to Normal (1) for all bars.
+   * Regime values: 0=Low_vol_trending, 1=Normal, 2=High_vol_ranging, 3=Crisis
+   */
+  regimeSchedule?: Array<{ start: number; end: number; regime: 0 | 1 | 2 | 3 }>;
 }
 
 export interface BacktestResult {
@@ -226,6 +233,42 @@ function buildOCamlPortfolio(
     daily_pnl: money_of_float(0),
     total_pnl: money_of_float(0),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Regime helpers
+// ---------------------------------------------------------------------------
+
+type RegimeId = 0 | 1 | 2 | 3;
+
+function lookupRegime(
+  schedule: Array<{ start: number; end: number; regime: RegimeId }> | undefined,
+  timestamp: number,
+): RegimeId {
+  if (!schedule) return 1; // Normal
+  for (const label of schedule) {
+    if (timestamp >= label.start && timestamp <= label.end) {
+      return label.regime;
+    }
+  }
+  return 1; // Default: Normal
+}
+
+/**
+ * Regime-based position size scaling factor.
+ * Mirrors the strategy-level adjustments in engine/src/strategies/*.ts:
+ * - Crisis: reduce to ~40% of normal sizing
+ * - High_vol_ranging: reduce to ~60%
+ * - Low_vol_trending / Normal: 100%
+ */
+function regimePositionScale(regime: RegimeId): number {
+  switch (regime) {
+    case 3: return 0.40;  // Crisis: aggressive reduction
+    case 2: return 0.60;  // High_vol_ranging: moderate reduction
+    case 0: return 1.00;  // Low_vol_trending: full sizing
+    case 1: return 1.00;  // Normal: full sizing
+    default: return 1.00;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -416,8 +459,10 @@ export function runBacktest(
 
       if (isDayTrade && !canDayTrade(pdtTracker)) continue;
 
-      // Calculate position size: use max_position_pct * equity
-      const positionValue = sig.max_position_pct * equity;
+      // Calculate position size: use max_position_pct * equity, scaled by regime
+      const currentRegime = lookupRegime(config.regimeSchedule, bar.timestamp);
+      const regimeScale = regimePositionScale(currentRegime);
+      const positionValue = sig.max_position_pct * regimeScale * equity;
       const targetPrice = sig.target_price;
       if (targetPrice <= 0) continue;
       const qty = Math.floor(positionValue / targetPrice);
