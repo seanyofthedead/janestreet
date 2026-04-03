@@ -1,10 +1,10 @@
 type t = Types.market_regime
 
-(* Classify regime from VIX and ADX values *)
-let classify ~vix ~adx =
-  if vix > 30.0 then Types.Crisis
-  else if vix > 25.0 && adx < 20.0 then High_vol_ranging
-  else if vix < 15.0 && adx > 25.0 then Low_vol_trending
+(* Classify regime from realized volatility and trend strength *)
+let classify ~realized_vol ~trend_strength =
+  if realized_vol > 0.30 then Types.Crisis
+  else if realized_vol > 0.20 && trend_strength < 0.5 then High_vol_ranging
+  else if realized_vol < 0.15 && trend_strength > 1.0 then Low_vol_trending
   else Normal
 
 (* Target allocation percentages by regime *)

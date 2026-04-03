@@ -19,6 +19,7 @@ import { EventBus } from './event-bus.js';
 import { State } from './state.js';
 import { StrategyRunner, STRATEGY_NAMES, type SymbolMarketData, type Phase, type Regime as RegimeType, type StrategySignal } from './strategy-runner.js';
 import { ConflictResolver } from './conflict-resolver.js';
+import { aggregateToDailyCloses, annualizedRealizedVol, trendStrength } from './regime-helpers.js';
 import { ConfigPoller } from './config-poller.js';
 import { PerformanceTracker } from './performance-tracker.js';
 import { SignalStore } from './signal-store.js';
@@ -101,6 +102,9 @@ export class Orchestrator {
 
   /** Watchdog-alive received */
   private watchdogAlive: boolean = false;
+
+  /** Previous regime for transition detection */
+  private previousRegime: number = 1; // Normal
 
   /** Whether market close procedures have been triggered today */
   private mmUnwound: boolean = false;
@@ -1045,11 +1049,31 @@ export class Orchestrator {
   }
 
   private computeRegime(): RegimeType {
-    // In production, VIX and ADX would come from market data
-    // For now, use defaults (normal regime)
-    const vix = 18.0;
-    const adx = 22.0;
-    return Regime.classify(vix, adx) as RegimeType;
+    const BARS_PER_DAY = 390;
+    const MIN_DAILY_CLOSES = 21;
+
+    // Prefer SPY as broad market proxy; fall back to first available symbol
+    const bars = this.barBuffer.get('SPY') ?? this.barBuffer.values().next().value;
+    if (!bars || bars.length < BARS_PER_DAY * MIN_DAILY_CLOSES) {
+      return 1 as RegimeType; // Normal during warm-up
+    }
+
+    const dailyCloses = aggregateToDailyCloses(bars, BARS_PER_DAY);
+    if (dailyCloses.length < MIN_DAILY_CLOSES) {
+      return 1 as RegimeType; // Normal during warm-up
+    }
+
+    const recentCloses = dailyCloses.slice(-MIN_DAILY_CLOSES);
+    const vol = annualizedRealizedVol(recentCloses);
+    const trend = trendStrength(recentCloses);
+    const regime = Regime.classify(vol, trend) as RegimeType;
+
+    if (regime !== this.previousRegime) {
+      this.logger.info({ from: this.previousRegime, to: regime, realizedVol: vol, trendStrength: trend }, 'Regime transition detected');
+      this.previousRegime = regime;
+    }
+
+    return regime;
   }
 
   private emitHeartbeat(): void {

@@ -361,20 +361,39 @@ describe('OCaml Performance module', () => {
 // ---------------------------------------------------------------------------
 
 describe('OCaml Regime module', () => {
-  it('classify: high VIX -> Crisis', () => {
-    expect(Regime.classify(35, 25)).toBe(3); // Crisis
+  // classify now takes (realized_vol, trend_strength) instead of (vix, adx)
+  it('classify: vol > 0.30 -> Crisis', () => {
+    expect(Regime.classify(0.31, 0.5)).toBe(3); // Crisis
   });
 
-  it('classify: high VIX + low ADX -> High_vol_ranging', () => {
-    expect(Regime.classify(27, 15)).toBe(2); // High_vol_ranging
+  it('classify: vol > 0.20 + trend < 0.5 -> High_vol_ranging', () => {
+    expect(Regime.classify(0.25, 0.3)).toBe(2); // High_vol_ranging
   });
 
-  it('classify: low VIX + high ADX -> Low_vol_trending', () => {
-    expect(Regime.classify(12, 30)).toBe(0); // Low_vol_trending
+  it('classify: vol < 0.15 + trend > 1.0 -> Low_vol_trending', () => {
+    expect(Regime.classify(0.10, 1.5)).toBe(0); // Low_vol_trending
   });
 
   it('classify: moderate values -> Normal', () => {
-    expect(Regime.classify(18, 22)).toBe(1); // Normal
+    expect(Regime.classify(0.18, 0.7)).toBe(1); // Normal
+  });
+
+  // Boundary tests: exact threshold values should NOT trigger the regime
+  it('classify: vol=0.30 exactly -> Normal (not > 0.30)', () => {
+    expect(Regime.classify(0.30, 0.5)).toBe(1); // Normal
+  });
+
+  it('classify: vol=0.20 trend=0.5 -> Normal (not < 0.5)', () => {
+    expect(Regime.classify(0.20, 0.5)).toBe(1); // Normal
+  });
+
+  it('classify: vol=0.15 trend=1.0 -> Normal (not < 0.15, not > 1.0)', () => {
+    expect(Regime.classify(0.15, 1.0)).toBe(1); // Normal
+  });
+
+  // Build verification: this differentiates new logic from old VIX/ADX logic
+  it('classify: vol=0.10 trend=1.5 -> Low_vol_trending (confirms new thresholds)', () => {
+    expect(Regime.classify(0.10, 1.5)).toBe(0); // Old VIX/ADX logic would return 1 (Normal)
   });
 
   it('target_allocation returns all fields', () => {

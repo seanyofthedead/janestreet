@@ -8,6 +8,9 @@
 
 import type { Bar } from './data-loader.js';
 
+// @ts-expect-error — Melange-compiled JS, no .d.ts
+import * as Regime from '../../trading-core-js/trading-core/lib/regime.js';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -31,15 +34,6 @@ export interface RegimeLabel {
 
 export type RegimeSchedule = RegimeLabel[];
 
-// ---------------------------------------------------------------------------
-// Thresholds (aligned with regime.ml)
-// ---------------------------------------------------------------------------
-
-const CRISIS_VOL_THRESHOLD = 0.30;
-const HIGH_VOL_THRESHOLD = 0.20;
-const LOW_VOL_THRESHOLD = 0.15;
-const LOW_TREND_THRESHOLD = 0.5;
-const HIGH_TREND_THRESHOLD = 1.0;
 const VOL_LOOKBACK = 20;
 
 // ---------------------------------------------------------------------------
@@ -78,10 +72,7 @@ export function computeOracleLabels(dailyBars: Bar[]): RegimeSchedule {
 }
 
 export function classifyRegime(realizedVol: number, trendStrength: number): RegimeId {
-  if (realizedVol > CRISIS_VOL_THRESHOLD) return 3;
-  if (realizedVol > HIGH_VOL_THRESHOLD && trendStrength < LOW_TREND_THRESHOLD) return 2;
-  if (realizedVol < LOW_VOL_THRESHOLD && trendStrength > HIGH_TREND_THRESHOLD) return 0;
-  return 1;
+  return Regime.classify(realizedVol, trendStrength) as RegimeId;
 }
 
 export function lookupRegime(schedule: RegimeSchedule, timestamp: number): RegimeId {

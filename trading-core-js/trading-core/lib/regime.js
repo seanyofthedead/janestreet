@@ -1,16 +1,16 @@
 // trading-core-js/trading-core/lib/regime.js
-function classify(vix, adx) {
-  if (vix > 30) {
+function classify(realized_vol, trend_strength) {
+  if (realized_vol > 0.30) {
     return (
       /* Crisis */
       3
     );
-  } else if (vix > 25 && adx < 20) {
+  } else if (realized_vol > 0.20 && trend_strength < 0.5) {
     return (
       /* High_vol_ranging */
       2
     );
-  } else if (vix < 15 && adx > 25) {
+  } else if (realized_vol < 0.15 && trend_strength > 1.0) {
     return (
       /* Low_vol_trending */
       0
