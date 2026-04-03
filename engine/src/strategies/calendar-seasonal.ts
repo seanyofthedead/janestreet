@@ -1,7 +1,11 @@
+import { assetClassForSymbol } from '../config.js';
 import type { StrategyModule, SymbolMarketData, Regime, StrategySignal } from './types.js';
 
 function generate(data: SymbolMarketData, regime: Regime): StrategySignal | null {
   if (data.bars.length < 30) return null;
+
+  // Calendar/seasonal anomalies are equity-specific; skip for crypto
+  if (assetClassForSymbol(data.symbol) === 'crypto') return null;
 
   // Seasonal anomalies break down in crises
   if (regime === 3) return null;

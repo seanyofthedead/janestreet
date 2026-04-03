@@ -7,13 +7,23 @@
 import pino from 'pino';
 import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import type { EventBus } from './event-bus.js';
-import type { EngineConfig } from './config.js';
+import type { EngineConfig, AssetClass } from './config.js';
+import { assetClassForSymbol } from './config.js';
 import { getDynamoClient, TABLE_CONFIG } from './dynamodb.js';
 import { STRATEGY_NAMES } from './strategies/index.js';
 
 // ---------------------------------------------------------------------------
 // Runtime config shape
 // ---------------------------------------------------------------------------
+
+export interface CryptoRiskOverrides {
+  maxPositionPct?: number;
+  maxSectorPct?: number;
+  minCashReservePct?: number;
+  maxDailyLossPct?: number;
+  maxDrawdownReducePct?: number;
+  maxDrawdownFlattenPct?: number;
+}
 
 export interface RuntimeConfig {
   /** Risk limits */
@@ -27,8 +37,14 @@ export interface RuntimeConfig {
   heartbeatTimeoutSeconds: number;
   maxPositionsByPhase: number;
 
-  /** Symbol universe */
+  /** Symbol universe (equities) */
   symbols: string[];
+
+  /** Symbol universe (crypto) */
+  cryptoSymbols: string[];
+
+  /** Crypto-specific risk overrides (merged onto base config for crypto signals) */
+  cryptoRiskOverrides: CryptoRiskOverrides;
 
   /** Strategy toggles */
   enabledStrategies: Record<string, boolean>;
@@ -56,6 +72,12 @@ function defaultRuntimeConfig(): RuntimeConfig {
     heartbeatTimeoutSeconds: 15,
     maxPositionsByPhase: 6,
     symbols: ['SPY', 'QQQ', 'IWM', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA'],
+    cryptoSymbols: ['BTC/USD', 'ETH/USD', 'SOL/USD'],
+    cryptoRiskOverrides: {
+      maxPositionPct: 0.10,
+      maxSectorPct: 1.0,        // disable sector concentration for crypto
+      maxDailyLossPct: 0.08,    // wider tolerance for crypto volatility
+    },
     enabledStrategies: {
       Mean_reversion: true,
       Sector_rotation: true,
@@ -90,6 +112,7 @@ export class ConfigPoller {
   private readonly logger: pino.Logger;
   private readonly bus: EventBus;
   private readonly pollIntervalMs: number;
+  private readonly assetClass: AssetClass;
   private current: RuntimeConfig;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -99,6 +122,7 @@ export class ConfigPoller {
     });
     this.bus = bus;
     this.pollIntervalMs = config.configPollIntervalMs;
+    this.assetClass = config.assetClass;
     this.current = defaultRuntimeConfig();
   }
 
@@ -126,9 +150,26 @@ export class ConfigPoller {
     return this.current;
   }
 
-  /** Get symbol universe */
+  /** Get equity symbol universe */
   getSymbols(): string[] {
     return this.current.symbols;
+  }
+
+  /** Get crypto symbol universe */
+  getCryptoSymbols(): string[] {
+    return this.current.cryptoSymbols;
+  }
+
+  /** Get all symbols based on configured asset class */
+  getAllSymbols(): string[] {
+    switch (this.assetClass) {
+      case 'equity':
+        return this.current.symbols;
+      case 'crypto':
+        return this.current.cryptoSymbols;
+      case 'both':
+        return [...this.current.symbols, ...this.current.cryptoSymbols];
+    }
   }
 
   /** Check if human has acknowledged a halt */
@@ -311,7 +352,7 @@ export class ConfigPoller {
   /**
    * Build a risk config object compatible with the OCaml risk engine.
    */
-  toOcamlRiskConfig(): {
+  toOcamlRiskConfig(signalAssetClass?: 'equity' | 'crypto'): {
     max_position_pct: number;
     max_sector_pct: number;
     min_cash_reserve_pct: number;
@@ -322,13 +363,14 @@ export class ConfigPoller {
     heartbeat_timeout_seconds: number;
     max_positions_by_phase: number;
   } {
+    const overrides = signalAssetClass === 'crypto' ? this.current.cryptoRiskOverrides : {};
     return {
-      max_position_pct: this.current.maxPositionPct,
-      max_sector_pct: this.current.maxSectorPct,
-      min_cash_reserve_pct: this.current.minCashReservePct,
-      max_daily_loss_pct: this.current.maxDailyLossPct,
-      max_drawdown_reduce_pct: this.current.maxDrawdownReducePct,
-      max_drawdown_flatten_pct: this.current.maxDrawdownFlattenPct,
+      max_position_pct: overrides.maxPositionPct ?? this.current.maxPositionPct,
+      max_sector_pct: overrides.maxSectorPct ?? this.current.maxSectorPct,
+      min_cash_reserve_pct: overrides.minCashReservePct ?? this.current.minCashReservePct,
+      max_daily_loss_pct: overrides.maxDailyLossPct ?? this.current.maxDailyLossPct,
+      max_drawdown_reduce_pct: overrides.maxDrawdownReducePct ?? this.current.maxDrawdownReducePct,
+      max_drawdown_flatten_pct: overrides.maxDrawdownFlattenPct ?? this.current.maxDrawdownFlattenPct,
       max_order_rate_per_min: this.current.maxOrderRatePerMin,
       heartbeat_timeout_seconds: this.current.heartbeatTimeoutSeconds,
       max_positions_by_phase: this.current.maxPositionsByPhase,
@@ -396,6 +438,8 @@ export class ConfigPoller {
       heartbeatTimeoutSeconds: (item.heartbeatTimeoutSeconds as number) ?? defaults.heartbeatTimeoutSeconds,
       maxPositionsByPhase: (item.maxPositionsByPhase as number) ?? defaults.maxPositionsByPhase,
       symbols: (item.symbols as string[]) ?? defaults.symbols,
+      cryptoSymbols: (item.cryptoSymbols as string[]) ?? defaults.cryptoSymbols,
+      cryptoRiskOverrides: (item.cryptoRiskOverrides as CryptoRiskOverrides) ?? defaults.cryptoRiskOverrides,
       enabledStrategies: (item.enabledStrategies as Record<string, boolean>) ?? defaults.enabledStrategies,
       humanAcknowledged: (item.humanAcknowledged as boolean) ?? defaults.humanAcknowledged,
       lastUpdated: (item.lastUpdated as number) ?? Date.now(),

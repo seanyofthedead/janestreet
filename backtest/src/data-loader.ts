@@ -58,7 +58,10 @@ export async function downloadBars(
   const allBars: Bar[] = [];
   let pageToken: string | undefined;
   const alpacaTimeframe = toAlpacaTimeframe(timeframe);
-  const baseUrl = 'https://data.alpaca.markets/v2/stocks';
+  const isCrypto = symbol.includes('/');
+  const baseUrl = isCrypto
+    ? 'https://data.alpaca.markets/v1beta3/crypto/us'
+    : 'https://data.alpaca.markets/v2/stocks';
 
   do {
     // Basic rate limiting: 200ms delay between requests

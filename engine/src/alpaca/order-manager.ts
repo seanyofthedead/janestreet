@@ -7,6 +7,7 @@ import { EventEmitter } from 'events';
 import { WebSocket } from 'ws';
 import pino from 'pino';
 import type { EngineConfig } from '../config.js';
+import { assetClassForSymbol } from '../config.js';
 import { AlpacaClient } from './client.js';
 import {
   AlpacaOrderSchema,
@@ -133,22 +134,29 @@ export class OrderManager extends EventEmitter {
       throw new Error('Must specify either qty or notional');
     }
 
-    // Check fractionable flag for fractional orders
+    const isCrypto = assetClassForSymbol(symbol) === 'crypto';
+
+    // Check fractionable flag for fractional orders (crypto is always fractional)
     const isFractional = qty !== undefined && !Number.isInteger(qty);
-    if (isFractional || notional !== undefined) {
+    if (!isCrypto && (isFractional || notional !== undefined)) {
       const fractionable = await this.checkFractionable(symbol);
       if (!fractionable) {
         throw new Error(`Asset ${symbol} does not support fractional orders`);
       }
     }
 
-    // Fractional orders must use time_in_force: 'day'
-    const tif = isFractional || notional !== undefined ? 'day' : (timeInForce ?? 'day');
-    if ((isFractional || notional !== undefined) && timeInForce && timeInForce !== 'day') {
-      this.logger.warn(
-        { symbol, requestedTif: timeInForce },
-        'Fractional/notional orders require time_in_force=day, overriding',
-      );
+    // Crypto uses 'gtc' by default (Alpaca rejects 'day' for crypto); equities use 'day'
+    let tif: 'day' | 'gtc' | 'ioc' | 'fok';
+    if (isCrypto) {
+      tif = timeInForce === 'ioc' || timeInForce === 'fok' ? timeInForce : 'gtc';
+    } else {
+      tif = isFractional || notional !== undefined ? 'day' : (timeInForce ?? 'day');
+      if ((isFractional || notional !== undefined) && timeInForce && timeInForce !== 'day') {
+        this.logger.warn(
+          { symbol, requestedTif: timeInForce },
+          'Fractional/notional orders require time_in_force=day, overriding',
+        );
+      }
     }
 
     const clientOrderId = makeClientOrderId(strategy, symbol);
@@ -168,7 +176,7 @@ export class OrderManager extends EventEmitter {
       orderRequest.notional = notional;
     }
 
-    if (extendedHours) {
+    if (extendedHours && !isCrypto) {
       orderRequest.extended_hours = true;
     }
 

@@ -15,6 +15,7 @@ import type { AlpacaClient } from './alpaca/client.js';
 import type { MarketDataStream } from './alpaca/market-data.js';
 import type { OrderManager } from './alpaca/order-manager.js';
 import type { EngineConfig } from './config.js';
+import { assetClassForSymbol } from './config.js';
 import { EventBus } from './event-bus.js';
 import { State } from './state.js';
 import { StrategyRunner, STRATEGY_NAMES, type SymbolMarketData, type Phase, type Regime as RegimeType, type StrategySignal } from './strategy-runner.js';
@@ -462,7 +463,7 @@ export class Orchestrator {
   private async enterWarmingUp(): Promise<void> {
     this.logger.info('Entering warmup phase');
     const warmupStart = Date.now();
-    const symbols = this.configPoller.getSymbols();
+    const symbols = this.configPoller.getAllSymbols();
 
     // Subscribe to market data for all symbols
     this.marketData.subscribe(symbols, symbols);
@@ -645,11 +646,16 @@ export class Orchestrator {
     this.logger.info({ rawSignals: signals.length, resolved: resolved.length }, 'Signal resolution');
 
     // 4. Run each signal through risk engine
-    const riskConfig = this.configPoller.toOcamlRiskConfig();
     const portfolio = this.state.toOcamlPortfolio();
-    const pdtTracker = { day_trades_used: this.state.dayTradeCount, max_day_trades: 3 };
+    const equityPdtTracker = { day_trades_used: this.state.dayTradeCount, max_day_trades: 3 };
+    // Crypto has no PDT rules — use a tracker that always allows trades
+    const cryptoPdtTracker = { day_trades_used: 0, max_day_trades: 3, equity: 999999 };
 
     for (const signal of resolved) {
+      const signalAssetClass = assetClassForSymbol(signal.symbol);
+      const riskConfig = this.configPoller.toOcamlRiskConfig(signalAssetClass);
+      const pdtTracker = signalAssetClass === 'crypto' ? cryptoPdtTracker : equityPdtTracker;
+
       const riskDecision = Risk.evaluate(
         riskConfig,
         portfolio,
@@ -727,13 +733,14 @@ export class Orchestrator {
     }
 
     try {
+      const isCrypto = assetClassForSymbol(signal.symbol) === 'crypto';
       const order = await this.orderManager.submitOrder({
         strategy: strategyName.toLowerCase(),
         symbol: signal.symbol,
         side,
         limitPrice: signal.target_price,
         notional: Math.round(notional * 100) / 100,
-        timeInForce: 'day',
+        timeInForce: isCrypto ? 'gtc' : 'day',
       });
 
       // Track in state
@@ -829,6 +836,7 @@ export class Orchestrator {
 
   private checkMarketCloseProcedures(): void {
     if (this.config.simulationMode) return;
+    if (this.config.assetClass === 'crypto') return; // crypto trades 24/7
     const { hour, minute } = getEasternTime();
 
     // 3:50 PM ET — unwind market making
@@ -855,6 +863,7 @@ export class Orchestrator {
 
   private checkMarketHoursTransitions(): void {
     if (this.config.simulationMode) return;
+    if (this.config.assetClass === 'crypto') return; // crypto trades 24/7
     const { hour, minute } = getEasternTime();
     const marketOpen = isMarketOpen(hour, minute);
 
@@ -1023,7 +1032,7 @@ export class Orchestrator {
 
   private buildMarketDataSnapshots(): SymbolMarketData[] {
     const snapshots: SymbolMarketData[] = [];
-    const symbols = this.configPoller.getSymbols();
+    const symbols = this.configPoller.getAllSymbols();
 
     for (const symbol of symbols) {
       const quote = this.latestQuotes.get(symbol);

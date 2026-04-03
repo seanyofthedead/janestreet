@@ -34,15 +34,17 @@ export type BarCallback = (symbol: string, bar: ReplayBar) => void;
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Get the most recent weekday as YYYY-MM-DD. */
-export function getPreviousTradingDay(): string {
+/** Get the most recent trading day as YYYY-MM-DD. Crypto trades on weekends. */
+export function getPreviousTradingDay(isCrypto: boolean = false): string {
   const now = new Date();
   const d = new Date(now);
   d.setDate(d.getDate() - 1);
 
-  // Skip weekends
-  while (d.getDay() === 0 || d.getDay() === 6) {
-    d.setDate(d.getDate() - 1);
+  // Skip weekends for equities only
+  if (!isCrypto) {
+    while (d.getDay() === 0 || d.getDay() === 6) {
+      d.setDate(d.getDate() - 1);
+    }
   }
 
   const year = d.getFullYear();
@@ -101,9 +103,15 @@ export class SimulationController {
     date: string,
     alpacaApiKey: string,
     alpacaSecret: string,
+    isCrypto: boolean = false,
   ): Promise<number> {
-    const startDate = new Date(`${date}T09:30:00-04:00`);
-    const endDate = new Date(`${date}T16:00:00-04:00`);
+    // Crypto trades 24/7; equities trade 9:30 AM - 4:00 PM ET
+    const startDate = isCrypto
+      ? new Date(`${date}T00:00:00Z`)
+      : new Date(`${date}T09:30:00-04:00`);
+    const endDate = isCrypto
+      ? new Date(`${date}T23:59:59Z`)
+      : new Date(`${date}T16:00:00-04:00`);
 
     this.logger.info({ date, symbols: symbols.length, start: startDate.toISOString(), end: endDate.toISOString() }, 'Loading simulation data');
 

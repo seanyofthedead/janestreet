@@ -6,7 +6,7 @@
 import { EventEmitter } from 'events';
 import { WebSocket } from 'ws';
 import pino from 'pino';
-import type { EngineConfig } from '../config.js';
+import type { EngineConfig, AssetClass } from '../config.js';
 import type { AlpacaClient } from './client.js';
 import {
   MarketDataMessageSchema,
@@ -39,10 +39,15 @@ interface BufferedMessage {
 // Constants
 // ---------------------------------------------------------------------------
 
-const MARKET_DATA_URL = 'wss://stream.data.alpaca.markets/v2/iex';
+const EQUITY_MARKET_DATA_URL = 'wss://stream.data.alpaca.markets/v2/iex';
+const CRYPTO_MARKET_DATA_URL = 'wss://stream.data.alpaca.markets/v1beta3/crypto/us';
 const MAX_BACKOFF_MS = 30_000;
 const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BUFFER_SIZE = 1_000;
+
+function marketDataUrl(assetClass: AssetClass): string {
+  return assetClass === 'crypto' ? CRYPTO_MARKET_DATA_URL : EQUITY_MARKET_DATA_URL;
+}
 
 // ---------------------------------------------------------------------------
 // MarketDataStream
@@ -53,6 +58,7 @@ export class MarketDataStream extends EventEmitter {
   private readonly logger: pino.Logger;
   private readonly config: EngineConfig;
   private readonly client: AlpacaClient;
+  private readonly wsUrl: string;
   private subscribedTrades: string[] = [];
   private subscribedQuotes: string[] = [];
   private backoffMs = INITIAL_BACKOFF_MS;
@@ -62,10 +68,11 @@ export class MarketDataStream extends EventEmitter {
   private intentionallyClosed = false;
   private messageBuffer: BufferedMessage[] = [];
 
-  constructor(config: EngineConfig, client: AlpacaClient, logger?: pino.Logger) {
+  constructor(config: EngineConfig, client: AlpacaClient, logger?: pino.Logger, assetClassOverride?: AssetClass) {
     super();
     this.config = config;
     this.client = client;
+    this.wsUrl = marketDataUrl(assetClassOverride ?? config.assetClass);
     this.logger = (logger ?? pino({ name: 'market-data' })).child({ component: 'market-data' });
   }
 
@@ -135,9 +142,9 @@ export class MarketDataStream extends EventEmitter {
   private doConnect(): void {
     this.isConnecting = true;
     this.isAuthenticated = false;
-    this.logger.info({ url: MARKET_DATA_URL }, 'Connecting to market data stream');
+    this.logger.info({ url: this.wsUrl }, 'Connecting to market data stream');
 
-    this.ws = new WebSocket(MARKET_DATA_URL);
+    this.ws = new WebSocket(this.wsUrl);
 
     this.ws.on('open', () => {
       this.logger.info('WebSocket open, authenticating');
@@ -224,7 +231,7 @@ export class MarketDataStream extends EventEmitter {
           const trade: BufferedMessage = {
             type: 'trade',
             symbol: parsed.S,
-            data: { t: parsed.t, p: parsed.p, s: parsed.s, x: parsed.x, i: parsed.i, c: parsed.c, z: parsed.z },
+            data: { t: parsed.t, p: parsed.p, s: parsed.s, x: parsed.x ?? undefined, i: parsed.i ?? undefined, c: parsed.c ?? undefined, z: parsed.z ?? undefined },
             receivedAt: Date.now(),
           };
           this.pushBuffer(trade);
@@ -236,7 +243,7 @@ export class MarketDataStream extends EventEmitter {
           const quote: BufferedMessage = {
             type: 'quote',
             symbol: parsed.S,
-            data: { t: parsed.t, bp: parsed.bp, bs: parsed.bs, ap: parsed.ap, as: parsed.as, bx: parsed.bx, ax: parsed.ax, c: parsed.c, z: parsed.z },
+            data: { t: parsed.t, bp: parsed.bp, bs: parsed.bs, ap: parsed.ap, as: parsed.as, bx: parsed.bx ?? undefined, ax: parsed.ax ?? undefined, c: parsed.c ?? undefined, z: parsed.z ?? undefined },
             receivedAt: Date.now(),
           };
           this.pushBuffer(quote);

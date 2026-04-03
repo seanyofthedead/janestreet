@@ -32,6 +32,13 @@ function intEnv(key: string, defaultValue: number): number {
   return parsed;
 }
 
+export type AssetClass = 'equity' | 'crypto' | 'both';
+
+/** Determine asset class from symbol format (crypto pairs contain '/') */
+export function assetClassForSymbol(symbol: string): 'equity' | 'crypto' {
+  return symbol.includes('/') ? 'crypto' : 'equity';
+}
+
 export interface EngineConfig {
   /** Alpaca API key */
   alpacaApiKey: string;
@@ -39,6 +46,9 @@ export interface EngineConfig {
   alpacaSecretKey: string;
   /** Alpaca base URL (paper or live) */
   alpacaBaseUrl: string;
+
+  /** Asset class to trade: equity, crypto, or both */
+  assetClass: AssetClass;
 
   /** Secret for authenticating local API requests */
   localApiSecret: string;
@@ -73,6 +83,8 @@ export function loadConfig(): EngineConfig {
     alpacaApiKey: requiredEnv('ALPACA_API_KEY'),
     alpacaSecretKey: requiredEnv('ALPACA_SECRET_KEY'),
     alpacaBaseUrl: optionalEnv('ALPACA_BASE_URL', 'https://paper-api.alpaca.markets') as string,
+
+    assetClass: (optionalEnv('ASSET_CLASS', 'equity') as AssetClass) ?? 'equity',
 
     localApiSecret: requiredEnv('LOCAL_API_SECRET'),
 

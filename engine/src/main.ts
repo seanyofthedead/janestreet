@@ -545,15 +545,21 @@ async function main(): Promise<void> {
     orderManager = new MockOrderManager(simulationController, logger);
 
     // Load historical data for the target date
-    const symbols = ['SPY', 'QQQ', 'IWM', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA'];
-    const targetDate = config.simulationDate ?? getPreviousTradingDay();
-    logger.info({ targetDate, speed: config.simulationSpeed, symbols: symbols.length }, 'Loading simulation data');
+    const isCrypto = config.assetClass === 'crypto';
+    const defaultEquitySymbols = ['SPY', 'QQQ', 'IWM', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA'];
+    const defaultCryptoSymbols = ['BTC/USD', 'ETH/USD', 'SOL/USD'];
+    const symbols = config.assetClass === 'crypto' ? defaultCryptoSymbols
+      : config.assetClass === 'both' ? [...defaultEquitySymbols, ...defaultCryptoSymbols]
+      : defaultEquitySymbols;
+    const targetDate = config.simulationDate ?? getPreviousTradingDay(isCrypto);
+    logger.info({ targetDate, speed: config.simulationSpeed, symbols: symbols.length, assetClass: config.assetClass }, 'Loading simulation data');
 
     const barCount = await simulationController.loadData(
       symbols,
       targetDate,
       config.alpacaApiKey,
       config.alpacaSecretKey,
+      isCrypto,
     );
 
     if (barCount === 0) {

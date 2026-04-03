@@ -6,6 +6,7 @@
 import { createRequire } from 'module';
 import pino from 'pino';
 import type { EngineConfig } from '../config.js';
+import { assetClassForSymbol } from '../config.js';
 import {
   AlpacaAccountSchema,
   AlpacaPositionSchema,
@@ -225,12 +226,14 @@ export class AlpacaClient {
     end: string,
   ): Promise<Bar[]> {
     this.logger.debug({ symbol, timeframe, start, end }, 'Fetching bars');
+    const isCrypto = assetClassForSymbol(symbol) === 'crypto';
+    const feedOpts = isCrypto ? {} : { feed: 'iex' };
     const raw = await this.rateLimitedCall(() =>
       this.alpaca.getBarsV2(symbol, {
         timeframe,
         start,
         end,
-        feed: 'iex',
+        ...feedOpts,
       }),
     );
 
@@ -260,8 +263,10 @@ export class AlpacaClient {
 
   async getLatestQuotes(symbols: string[]): Promise<Map<string, Quote>> {
     this.logger.debug({ symbols }, 'Fetching latest quotes');
+    const hasCrypto = symbols.some((s) => assetClassForSymbol(s) === 'crypto');
+    const feedOpts = hasCrypto ? {} : { feed: 'iex' };
     const raw = await this.rateLimitedCall(() =>
-      this.alpaca.getLatestQuotes(symbols, { feed: 'iex' }),
+      this.alpaca.getLatestQuotes(symbols, feedOpts),
     );
 
     const result = new Map<string, Quote>();

@@ -1,7 +1,11 @@
+import { assetClassForSymbol } from '../config.js';
 import type { StrategyModule, SymbolMarketData, Regime, StrategySignal } from './types.js';
 
 function generate(data: SymbolMarketData, regime: Regime): StrategySignal | null {
   if (data.bars.length < 50) return null;
+
+  // Sector rotation relies on equity sector classifications; skip for crypto
+  if (assetClassForSymbol(data.symbol) === 'crypto') return null;
 
   // Relative-strength approach: compare long-term trend to short-term pullback
   const longTermPrice = data.bars[data.bars.length - 50].c;
