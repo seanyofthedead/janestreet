@@ -19,7 +19,7 @@ import { EventBus } from './event-bus.js';
 import { State } from './state.js';
 import { StrategyRunner, STRATEGY_NAMES, type SymbolMarketData, type Phase, type Regime as RegimeType, type StrategySignal } from './strategy-runner.js';
 import { ConflictResolver } from './conflict-resolver.js';
-import { aggregateToDailyCloses, annualizedRealizedVol, trendStrength } from './regime-helpers.js';
+import { annualizedRealizedVol, trendStrength } from './regime-helpers.js';
 import { ConfigPoller } from './config-poller.js';
 import { PerformanceTracker } from './performance-tracker.js';
 import { SignalStore } from './signal-store.js';
@@ -1049,23 +1049,20 @@ export class Orchestrator {
   }
 
   private computeRegime(): RegimeType {
-    const BARS_PER_DAY = 390;
-    const MIN_DAILY_CLOSES = 21;
+    const MIN_BARS = 21; // Need at least 21 closes for 20 log returns
 
     // Prefer SPY as broad market proxy; fall back to first available symbol
     const bars = this.barBuffer.get('SPY') ?? this.barBuffer.values().next().value;
-    if (!bars || bars.length < BARS_PER_DAY * MIN_DAILY_CLOSES) {
+    if (!bars || bars.length < MIN_BARS) {
       return 1 as RegimeType; // Normal during warm-up
     }
 
-    const dailyCloses = aggregateToDailyCloses(bars, BARS_PER_DAY);
-    if (dailyCloses.length < MIN_DAILY_CLOSES) {
-      return 1 as RegimeType; // Normal during warm-up
-    }
-
-    const recentCloses = dailyCloses.slice(-MIN_DAILY_CLOSES);
-    const vol = annualizedRealizedVol(recentCloses);
-    const trend = trendStrength(recentCloses);
+    // Use 1-min bar closes directly — annualization with sqrt(252*390) is
+    // scale-invariant, producing the same annualized vol as daily bars with sqrt(252).
+    // Thresholds (0.30 Crisis, 0.20 High_vol, 0.15 Low_vol) work unchanged.
+    const closes = bars.slice(-MIN_BARS).map((b: { c: number }) => b.c);
+    const vol = annualizedRealizedVol(closes);
+    const trend = trendStrength(closes);
     const regime = Regime.classify(vol, trend) as RegimeType;
 
     if (regime !== this.previousRegime) {

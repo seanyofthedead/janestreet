@@ -8,9 +8,9 @@ import { describe, it, expect } from 'vitest';
 // @ts-expect-error — Melange-compiled JS, no .d.ts
 import * as Regime from '../../trading-core-js/trading-core/lib/regime.js';
 import {
-  aggregateToDailyCloses,
   annualizedRealizedVol,
   trendStrength,
+  PERIODS_PER_YEAR_DAILY,
 } from '../src/regime-helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -118,37 +118,17 @@ describe('helper-function equivalence (engine vs backtest reference)', () => {
 
   for (const [name, closes] of Object.entries(testArrays)) {
     it(`annualizedRealizedVol matches reference for ${name}`, () => {
-      const engineVal = annualizedRealizedVol(closes);
+      // Use PERIODS_PER_YEAR_DAILY since reference uses sqrt(252)
+      const engineVal = annualizedRealizedVol(closes, PERIODS_PER_YEAR_DAILY);
       const refVal = refAnnualizedRealizedVol(closes);
       expect(Math.abs(engineVal - refVal)).toBeLessThan(EPSILON);
     });
 
     it(`trendStrength matches reference for ${name}`, () => {
-      const engineVal = trendStrength(closes);
+      // Use PERIODS_PER_YEAR_DAILY since reference uses 252
+      const engineVal = trendStrength(closes, PERIODS_PER_YEAR_DAILY);
       const refVal = refTrendStrength(closes);
       expect(Math.abs(engineVal - refVal)).toBeLessThan(EPSILON);
     });
   }
-});
-
-// ---------------------------------------------------------------------------
-// Aggregation correctness
-// ---------------------------------------------------------------------------
-
-describe('aggregateToDailyCloses correctness', () => {
-  it('produces correct daily sequence from synthetic 1-min bars', () => {
-    // 3 "days" of 390 bars each, with different closing prices per day
-    const bars: Array<{ c: number }> = [];
-    for (let day = 0; day < 3; day++) {
-      for (let bar = 0; bar < 390; bar++) {
-        bars.push({ c: 100 + day * 10 + bar * 0.01 });
-      }
-    }
-    const daily = aggregateToDailyCloses(bars, 390);
-    expect(daily).toHaveLength(3);
-    // Last bar of each day
-    expect(daily[0]).toBeCloseTo(100 + 389 * 0.01); // 103.89
-    expect(daily[1]).toBeCloseTo(110 + 389 * 0.01); // 113.89
-    expect(daily[2]).toBeCloseTo(120 + 389 * 0.01); // 123.89
-  });
 });
